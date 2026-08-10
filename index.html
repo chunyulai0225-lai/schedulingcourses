@@ -2159,7 +2159,6 @@ function hasConflict(classId, key, teacherId){
 
     return false;
   }
-
 function hasFixedConflict(classId, key, subject, teacherId){
   for(const [cid, sch] of Object.entries(schedules)){
     if(cid===classId) continue;
