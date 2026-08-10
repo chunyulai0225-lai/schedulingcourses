@@ -3804,9 +3804,6 @@ function engine2_findRepairCandidates(failedTask, placedCandidates){
     // repairDifficulty < 8（7-8 = 連堂，仍可嘗試；9-10 = 不可搬）
     if((cand.repairDifficulty || 0) >= 8) return false;
 
-    // confidence < threshold（信心低才值得搬）
-    const conf = sr.confidence;
-    if(conf !== null && conf !== undefined && conf >= ENGINE2_REPAIR_CONFIDENCE_THRESHOLD) return false;
 
     // 不搬 SAFE Candidate（格子太珍貴）
     if(sr.candidateType === 'SAFE') return false;
