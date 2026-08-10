@@ -2445,16 +2445,23 @@ function engine2_createCandidate({
  * @param {Set}    usedDays - 此科目已使用的天（同科目不同天規則）
  * @returns {Candidate[]}
  */
-function engine2_buildSingleCandidates(task, usedDays = new Set()){
+function engine2_buildSingleCandidates(task, usedDays = new Set(), options = {}){
   const { classId, subjectName, rule, teacherId } = task;
+
   const c = classes.find(x => x.id === classId);
   if(!c) return [];
-  if(!rule) return []; // rule 未定義時安全回傳空陣列
+  if(!rule) return [];
 
   const isPE   = !!rule.isPE;
   const isMain = !!rule.isMain;
-  const needsRoom = subjectNeedsRoom(subjectName, teacherId);
-  if(needsRoom && teacherId) ensureRoomAssignment(classId, subjectName, teacherId);
+
+  const needsRoom = options.ignoreRoom
+    ? false
+    : subjectNeedsRoom(subjectName, teacherId);
+
+  if(needsRoom && teacherId){
+    ensureRoomAssignment(classId, subjectName, teacherId);
+  }
 
   const candidates = [];
 
