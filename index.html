@@ -2135,30 +2135,12 @@ function renderSchedule(){
   renderTeacherTable(); renderOverview();
 }
 function hasConflict(classId, key, teacherId){
-  // 沒有指定老師，不應該判定為老師衝堂
-  if(!teacherId) return false;
-
-  const targetClassId = String(classId);
-  const targetTeacherId = String(teacherId);
-
   for(const [cid, sch] of Object.entries(schedules)){
-    // 排除自己班級
-    if(String(cid) === targetClassId) continue;
-
-    const cell = sch?.[key];
-    if(!cell) continue;
-
-    // 只有同一位老師在同一時段已有其他班課程，才算衝堂
-    if(
-      cell.teacherId &&
-      String(cell.teacherId) === targetTeacherId
-    ){
-      return true;
-    }
+    if(cid===classId) continue;
+    if(sch[key] && sch[key].teacherId===teacherId) return true;
   }
-
-    return false;
-  }
+  return false;
+}
 function hasFixedConflict(classId, key, subject, teacherId){
   for(const [cid, sch] of Object.entries(schedules)){
     if(cid===classId) continue;
@@ -2307,41 +2289,16 @@ function ensureRoomAssignment(classId, subjectName, teacherId){
 
 function isRoomSlotFree(classId, subjectName, day, period){
   const myAssignment = classRoomAssignment[classId]?.[subjectName];
-
-  // 沒有指定專科教室的科目，不需要檢查教室
   if(!myAssignment) return true;
-
-  const myRoom = myAssignment.room;
-  const myParity = myAssignment.parity;
-
-  // 檢查其他班級是否同一時間使用同一間教室
   for(const [otherClassId, assignMap] of Object.entries(classRoomAssignment)){
-    if(otherClassId === classId) continue;
-
-    const other = assignMap?.[subjectName];
-
-    if(!other || other.room !== myRoom) continue;
-
-    // 自然科：同一間自然教室允許甲、乙不同組同時使用
-    // 但 parity 相同時不能同時使用
-    if(
-      subjectName === '自然科學' &&
-      myParity &&
-      other.parity &&
-      myParity !== other.parity
-    ){
-      continue;
-    }
-
-    const cell =
-      schedules[otherClassId] &&
-      schedules[otherClassId][`${day}-${period}`];
-
-    if(cell && cell.subject === subjectName){
-      return false;
-    }
+    if(otherClassId===classId) continue;
+    const other = assignMap[subjectName];
+    if(!other || other.room!==myAssignment.room) continue;
+    // 自然教室：不同單雙週不衝突（奇數週A班、偶數週B班輪用同一間）
+    if(subjectName==='自然科學' && other.parity && other.parity!==myAssignment.parity) continue;
+    const cell = schedules[otherClassId]&&schedules[otherClassId][day+'-'+period];
+    if(cell && cell.subject===subjectName) return false;
   }
-
   return true;
 }
 
@@ -2463,23 +2420,16 @@ function engine2_createCandidate({
  * @param {Set}    usedDays - 此科目已使用的天（同科目不同天規則）
  * @returns {Candidate[]}
  */
-function engine2_buildSingleCandidates(task, usedDays = new Set(), options = {}){
+function engine2_buildSingleCandidates(task, usedDays = new Set()){
   const { classId, subjectName, rule, teacherId } = task;
-
   const c = classes.find(x => x.id === classId);
   if(!c) return [];
-  if(!rule) return [];
+  if(!rule) return []; // rule 未定義時安全回傳空陣列
 
   const isPE   = !!rule.isPE;
   const isMain = !!rule.isMain;
-
-  const needsRoom = options.ignoreRoom
-    ? false
-    : subjectNeedsRoom(subjectName, teacherId);
-
-  if(needsRoom && teacherId){
-    ensureRoomAssignment(classId, subjectName, teacherId);
-  }
+  const needsRoom = subjectNeedsRoom(subjectName, teacherId);
+  if(needsRoom && teacherId) ensureRoomAssignment(classId, subjectName, teacherId);
 
   const candidates = [];
 
@@ -3843,14 +3793,6 @@ function engine2_createRepairLog({
  * 排序：RISKY 優先 → repairDifficulty 低 → confidence 低
  */
 function engine2_findRepairCandidates(failedTask, placedCandidates){
-  
-  console.log('[DEBUG RepairCandidates] START', {
-  classId: failedTask.classId,
-  subject: failedTask.subjectName,
-  teacherId: failedTask.teacherId,
-  placedCount: placedCandidates.length
-});
-  
   const filtered = placedCandidates.filter(pe => {
     const cand = pe.selected.candidate;
     const sr   = pe.selected.scoreResult;
@@ -3860,8 +3802,7 @@ function engine2_findRepairCandidates(failedTask, placedCandidates){
     if(cellLocked && cellLocked !== null) return false;
 
     // repairDifficulty < 8（7-8 = 連堂，仍可嘗試；9-10 = 不可搬）
-    if((cand.repairDifficulty || 0) > 8) return false;
-
+    if((cand.repairDifficulty || 0) >= 8) return false;
 
     // 不搬 SAFE Candidate（格子太珍貴）
     if(sr.candidateType === 'SAFE') return false;
@@ -3870,6 +3811,18 @@ function engine2_findRepairCandidates(failedTask, placedCandidates){
     const sameTeacher = failedTask.teacherId && cand.teacherId === failedTask.teacherId;
     const sameClass   = cand.classId === failedTask.classId;
     if(!sameTeacher && !sameClass) return false;
+
+    // 搬走這個 candidate 是否真的能讓 failedTask 有機會用到這個 day/period？
+    // - sameClass：candidate 本身就佔用 failedTask 班級的格子，搬走後這格自然釋出，一定相關。
+    // - 僅 sameTeacher（非 sameClass）：搬走它只是讓「老師」在這個 day/period 空出來，
+    //   若 failedTask 班級在這個 day/period 本來就沒有空格（被其他課占用或被年段封鎖），
+    //   搬走也無濟於事，必須排除，否則會佔用 ENGINE2_MAX_REPAIR_CANDIDATES 的名額。
+    if(!sameClass){
+      const failedClass = classes.find(x => x.id === failedTask.classId);
+      if(!failedClass) return false;
+      if(isBlockedByBand(failedClass.grade, cand.day, cand.period)) return false;
+      if(isOccupied(failedTask.classId, `${cand.day}-${cand.period}`)) return false;
+    }
 
     return true;
   });
@@ -4614,31 +4567,11 @@ function engine2_checkAllFailureCodes(failedTask, precomputed){
     if(dblCands.length === 0) codes.add('NO_DOUBLE_SLOT');
   }
 
-// ── SUBJECT_IMPOSSIBLE：只檢查「科目本身的固定 Hard Constraint」
-// 不考慮：目前課表已占用、教師衝堂、教師不可排、教室衝突。
-// 避免把「目前排不進去」誤判成「科目本身無解」。
-
-let intrinsicSlotCount = 0;
-
-DAYS.forEach(d => {
-  PERIODS.forEach(p => {
-
-    // 年段固定封鎖
-    if(isBlockedByBand(grade, d, p)) return;
-
-    // 體育不能排第4、5節
-    if(rule?.isPE && (p === 4 || p === 5)) return;
-
-    // 主科不排第7節
-    if(rule?.isMain && p === 7) return;
-
-    intrinsicSlotCount++;
-  });
-});
-
-if(intrinsicSlotCount === 0){
-  codes.add('SUBJECT_IMPOSSIBLE');
-}
+  // ── SUBJECT_IMPOSSIBLE：即使無老師/教室限制，仍找不到任何合法格子
+  // （年段封鎖 + 體育節次限制 + 等等使所有格子都不合法）
+  const ghostTask = {...failedTask, teacherId: null};
+  const ghostCands = engine2_buildSingleCandidates(ghostTask, new Set());
+  if(ghostCands.length === 0) codes.add('SUBJECT_IMPOSSIBLE');
 
   // ── ROOM_OVERLOADED（簡化判斷）：需要教室，且所有時段教室都滿
   if(needRoom && freeSlotCount > 0 && teacherFreeSlotCount > 0 && roomFreeSlotCount === 0){
@@ -4976,8 +4909,7 @@ function engine2_smartSchedule(scheduleMode = 'full'){
   // （已內含於 engine2_runSchedulingLoop，此步驟為說明用）
 
   // ── Step 3–4：主排課迴圈（Phase 4 SchedulingLoop）
-  window._engine2LoopResult = engine2_runSchedulingLoop(scheduleMode);
-const loopResult = window._engine2LoopResult;
+  const loopResult = engine2_runSchedulingLoop(scheduleMode);
 
   // ── Step 5：Repair Engine（Phase 5）
   const repairResult = engine2_repairEngineV2(
@@ -5069,38 +5001,13 @@ function engine2_restoreSchedFromSnap(snap){
  * @returns {boolean} 是否成功（schedules 與 placedCandidates 已就地更新）
  */
 function engine2_doChainMove(task, placedCandidates, precomputed, depth, maxDepth, inChain){
-  console.log(
-  '[ChainMove START]',
-  task.classId,
-  task.subjectName,
-  'depth=', depth
-);
   if(depth > maxDepth) return false;
 
   var movable = engine2_findRepairCandidates(task, placedCandidates)
     .filter(function(pe){ return !inChain.has(pe); });
-  console.log(
-  '[ChainMove]',
-  task.classId,
-  task.subjectName,
-  'movable =',
-  movable.length,
-  'placedCandidates =',
-  placedCandidates.length
-);
   var toTry = movable.slice(0, ENGINE2_MAX_REPAIR_CANDIDATES);
-console.log(
-  '[ChainMove] toTry =',
-  toTry.length
-);
+
   for(var i = 0; i < toTry.length; i++){
-    
-console.log('[ChainMove LOOP]', {
-  i: i,
-  toTryLength: toTry.length,
-  task: task.classId + ' ' + task.subjectName
-});
-    
     var pe       = toTry[i];
     var origCand = pe.selected.candidate;
 
@@ -5150,21 +5057,6 @@ console.log('[ChainMove LOOP]', {
     var peCands  = engine2_buildCandidates(peTask, engine2_getUsedDays(peTask));
     var peCtx    = engine2_buildContext(peTask, precomputed);
     var bestPe   = engine2_selectBestCandidate(peCands, peCtx);
-
-    console.log('[ChainMove CHECK]', {
-  task: task.classId + ' ' + task.subjectName,
-  moved: origCand.classId + ' ' + origCand.subjectName,
-  bestTask: !!bestTask,
-  taskCandidateCount: taskCands.length,
-  peCandidateCount: peCands.length,
-  bestPe: !!bestPe,
-  bestPeScore: bestPe ? bestPe.scoreResult.totalScore : null,
-  originalScore: pe.selected.scoreResult.totalScore,
-  degradation: bestPe
-    ? pe.selected.scoreResult.totalScore - bestPe.scoreResult.totalScore
-    : null,
-  maxDegradation: ENGINE2_MAX_SCORE_DEGRADATION
-});
 
     // ── pe 有直接落腳點
     if(bestPe){
@@ -5342,20 +5234,13 @@ function displayEngine2Result(result){
   const entries = rpt.entries || [];
 
   var lines = ['schedulingcourses.netlify.app 顯示', '', '以下科目未能完全排入：', ''];
-  entries.slice(0, 30).forEach(function(e, i){
-    var className = e.className || '未知班級';
-    var subjectName = e.subjectName || '未知科目';
-    var code = e.primaryCause && e.primaryCause.failureCode
-        ? e.primaryCause.failureCode
-        : 'UNKNOWN';
-
-    lines.push((i + 1) + '. ' + className + '｜' + subjectName + '｜' + code);
-});
-
-if(entries.length > 30){
-    lines.push('');
-    lines.push('……其餘 ' + (entries.length - 30) + ' 筆請查看 Console（F12）');
-}
+  entries.forEach(function(e){
+    var line = e.className + '：' + e.subjectName + '：' + e.primaryCause.failureMessage;
+    if(e.secondaryCauses && e.secondaryCauses.length > 0){
+      line += '；' + e.secondaryCauses.map(function(s){ return s.failureMessage; }).join('；');
+    }
+    lines.push(line);
+  });
   lines.push('');
   lines.push('─────────────────────────────');
   lines.push('📊 Engine 2.0 統計摘要');
@@ -5364,23 +5249,9 @@ if(entries.length > 30){
   lines.push('Backtracking 修復：' + rpt.statistics.backtrackSuccessCount + ' 個');
   var avgScore = rpt.engineMetrics.averageCandidateScore;
   lines.push('平均 Candidate Score：' + (avgScore !== null ? avgScore : 'N/A'));
-  lines.push('⏱耗時：' + elapsed + ' ms');
-
-lines.push('');
-lines.push('📋 未排入任務：' + entries.length + ' 個');
-
-entries.forEach(function(e, i){
-  var className = e.className || '未知班級';
-  var subjectName = e.subjectName || '未知科目';
-  var code = e.primaryCause && e.primaryCause.failureCode
-    ? e.primaryCause.failureCode
-    : 'UNKNOWN';
-
-  lines.push((i + 1) + '. ' + className + '｜' + subjectName + '｜' + code);
-});
-
-lines.push('');
-lines.push('💡 修正建議（依優先級）：');
+  lines.push('耗時：' + elapsed + 'ms');
+  lines.push('');
+  lines.push('💡 修正建議（依優先級）：');
   var shown = new Set();
   entries.slice(0, 8).forEach(function(e){
     var code = e.primaryCause.failureCode;
