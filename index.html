@@ -5094,6 +5094,13 @@ console.log(
   toTry.length
 );
   for(var i = 0; i < toTry.length; i++){
+    
+console.log('[ChainMove LOOP]', {
+  i: i,
+  toTryLength: toTry.length,
+  task: task.classId + ' ' + task.subjectName
+});
+    
     var pe       = toTry[i];
     var origCand = pe.selected.candidate;
 
