@@ -3854,7 +3854,7 @@ function engine2_findRepairCandidates(failedTask, placedCandidates){
     if(cellLocked && cellLocked !== null) return false;
 
     // repairDifficulty < 8（7-8 = 連堂，仍可嘗試；9-10 = 不可搬）
-    if((cand.repairDifficulty || 0) >= 8) return false;
+    if((cand.repairDifficulty || 0) > 8) return false;
 
 
     // 不搬 SAFE Candidate（格子太珍貴）
@@ -5062,12 +5062,30 @@ function engine2_restoreSchedFromSnap(snap){
  * @returns {boolean} 是否成功（schedules 與 placedCandidates 已就地更新）
  */
 function engine2_doChainMove(task, placedCandidates, precomputed, depth, maxDepth, inChain){
+  console.log(
+  '[ChainMove START]',
+  task.classId,
+  task.subjectName,
+  'depth=', depth
+);
   if(depth > maxDepth) return false;
 
   var movable = engine2_findRepairCandidates(task, placedCandidates)
     .filter(function(pe){ return !inChain.has(pe); });
+  console.log(
+  '[ChainMove]',
+  task.classId,
+  task.subjectName,
+  'movable =',
+  movable.length,
+  'placedCandidates =',
+  placedCandidates.length
+);
   var toTry = movable.slice(0, ENGINE2_MAX_REPAIR_CANDIDATES);
-
+console.log(
+  '[ChainMove] toTry =',
+  toTry.length
+);
   for(var i = 0; i < toTry.length; i++){
     var pe       = toTry[i];
     var origCand = pe.selected.candidate;
