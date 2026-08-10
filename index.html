@@ -5008,9 +5008,21 @@ function engine2_doChainMove(task, placedCandidates, precomputed, depth, maxDept
     .filter(function(pe){ return !inChain.has(pe); });
   var toTry = movable.slice(0, ENGINE2_MAX_REPAIR_CANDIDATES);
 
+  // [ChainMove DEBUG] 暫時性診斷 log，驗證完成後可移除
+  console.log('[ChainMove DEBUG] ENTER', {
+    task: task.classId + ' ' + task.subjectName, depth: depth,
+    movable: movable.length, toTry: toTry.length,
+  });
+
   for(var i = 0; i < toTry.length; i++){
     var pe       = toTry[i];
     var origCand = pe.selected.candidate;
+
+    // [ChainMove DEBUG]
+    console.log('[ChainMove DEBUG] TRY CANDIDATE', {
+      task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+      pe: origCand.classId + ' ' + origCand.subjectName + ' ' + origCand.day + '-' + origCand.period + ' teacher=' + origCand.teacherId,
+    });
 
     // ── 快照（確保失敗時可以完整還原）
     var schedSnap = JSON.parse(JSON.stringify(schedules));
@@ -5028,6 +5040,14 @@ function engine2_doChainMove(task, placedCandidates, precomputed, depth, maxDept
     var taskCands    = engine2_buildCandidates(task, taskUsedDays);
     var taskCtx      = engine2_buildContext(task, precomputed);
     var bestTask     = engine2_selectBestCandidate(taskCands, taskCtx);
+
+    // [ChainMove DEBUG]
+    console.log('[ChainMove DEBUG] bestTask', {
+      task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+      taskCandsCount: taskCands.length,
+      bestTaskFound: !!bestTask,
+      bestTaskSlot: bestTask ? (bestTask.candidate.day + '-' + bestTask.candidate.period) : null,
+    });
 
     if(!bestTask){
       engine2_restoreSchedFromSnap(schedSnap);
@@ -5058,6 +5078,15 @@ function engine2_doChainMove(task, placedCandidates, precomputed, depth, maxDept
     var peCands  = engine2_buildCandidates(peTask, engine2_getUsedDays(peTask));
     var peCtx    = engine2_buildContext(peTask, precomputed);
     var bestPe   = engine2_selectBestCandidate(peCands, peCtx);
+
+    // [ChainMove DEBUG]
+    console.log('[ChainMove DEBUG] bestPe', {
+      task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+      peCandsCount: peCands.length,
+      bestPeFound: !!bestPe,
+      degradation: bestPe ? (pe.selected.scoreResult.totalScore - bestPe.scoreResult.totalScore) : null,
+      maxAllowed: ENGINE2_MAX_SCORE_DEGRADATION,
+    });
 
     // ── pe 有直接落腳點
     if(bestPe){
@@ -5090,10 +5119,23 @@ function engine2_doChainMove(task, placedCandidates, precomputed, depth, maxDept
 
     // ── pe 找不到直接落腳點，嘗試連鎖（depth + 1）
     if(depth < maxDepth){
+      // [ChainMove DEBUG]
+      console.log('[ChainMove DEBUG] RECURSE', {
+        task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+        nextDepth: depth + 1,
+        peTask: peTask.classId + ' ' + peTask.subjectName,
+      });
+
       inChain.add(pe);
       var chainOk = engine2_doChainMove(peTask, placedCandidates, precomputed,
                                         depth + 1, maxDepth, inChain);
       inChain.delete(pe);
+
+      // [ChainMove DEBUG]
+      console.log('[ChainMove DEBUG] RECURSE RESULT', {
+        task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+        chainOk: chainOk,
+      });
 
       if(chainOk){
         // pe 已被連鎖修復，task 已佔位（已放入 schedules），更新 placedCandidates
@@ -5117,7 +5159,17 @@ function engine2_doChainMove(task, placedCandidates, precomputed, depth, maxDept
     engine2_restoreSchedFromSnap(schedSnap);
     placedCandidates.length = 0;
     pcSnap.forEach(function(e){ placedCandidates.push(e); });
+
+    // [ChainMove DEBUG]
+    console.log('[ChainMove DEBUG] CANDIDATE FAILED, ROLLED BACK', {
+      task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+    });
   }
+
+  // [ChainMove DEBUG]
+  console.log('[ChainMove DEBUG] EXIT false (all candidates exhausted)', {
+    task: task.classId + ' ' + task.subjectName, depth: depth,
+  });
 
   return false;
 }
