@@ -2289,16 +2289,41 @@ function ensureRoomAssignment(classId, subjectName, teacherId){
 
 function isRoomSlotFree(classId, subjectName, day, period){
   const myAssignment = classRoomAssignment[classId]?.[subjectName];
+
+  // 沒有指定專科教室的科目，不需要檢查教室
   if(!myAssignment) return true;
+
+  const myRoom = myAssignment.room;
+  const myParity = myAssignment.parity;
+
+  // 檢查其他班級是否同一時間使用同一間教室
   for(const [otherClassId, assignMap] of Object.entries(classRoomAssignment)){
-    if(otherClassId===classId) continue;
-    const other = assignMap[subjectName];
-    if(!other || other.room!==myAssignment.room) continue;
-    // 自然教室：不同單雙週不衝突（奇數週A班、偶數週B班輪用同一間）
-    if(subjectName==='自然科學' && other.parity && other.parity!==myAssignment.parity) continue;
-    const cell = schedules[otherClassId]&&schedules[otherClassId][day+'-'+period];
-    if(cell && cell.subject===subjectName) return false;
+    if(otherClassId === classId) continue;
+
+    const other = assignMap?.[subjectName];
+
+    if(!other || other.room !== myRoom) continue;
+
+    // 自然科：同一間自然教室允許甲、乙不同組同時使用
+    // 但 parity 相同時不能同時使用
+    if(
+      subjectName === '自然科學' &&
+      myParity &&
+      other.parity &&
+      myParity !== other.parity
+    ){
+      continue;
+    }
+
+    const cell =
+      schedules[otherClassId] &&
+      schedules[otherClassId][`${day}-${period}`];
+
+    if(cell && cell.subject === subjectName){
+      return false;
+    }
   }
+
   return true;
 }
 
