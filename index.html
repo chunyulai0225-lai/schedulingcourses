@@ -3825,6 +3825,13 @@ function engine2_findRepairCandidates(failedTask, placedCandidates){
       if(isOccupied(failedTask.classId, `${cand.day}-${cand.period}`)) return false;
     }
 
+    // - 僅 sameClass（非 sameTeacher）：搬走它只是讓 failedTask 班級的這一格空出來，
+    //   若 failedTask 的老師這個時段本來就在別班上課（跟 candidate 本身無關），
+    //   搬走也無濟於事，必須排除。
+    if(!sameTeacher && failedTask.teacherId){
+      if(hasConflict(failedTask.classId, `${cand.day}-${cand.period}`, failedTask.teacherId)) return false;
+    }
+
     return true;
   });
 
