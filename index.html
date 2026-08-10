@@ -5223,13 +5223,20 @@ function displayEngine2Result(result){
   const entries = rpt.entries || [];
 
   var lines = ['schedulingcourses.netlify.app 顯示', '', '以下科目未能完全排入：', ''];
-  entries.forEach(function(e){
-    var line = e.className + '：' + e.subjectName + '：' + e.primaryCause.failureMessage;
-    if(e.secondaryCauses && e.secondaryCauses.length > 0){
-      line += '；' + e.secondaryCauses.map(function(s){ return s.failureMessage; }).join('；');
-    }
-    lines.push(line);
-  });
+  entries.slice(0, 30).forEach(function(e, i){
+    var className = e.className || '未知班級';
+    var subjectName = e.subjectName || '未知科目';
+    var code = e.primaryCause && e.primaryCause.failureCode
+        ? e.primaryCause.failureCode
+        : 'UNKNOWN';
+
+    lines.push((i + 1) + '. ' + className + '｜' + subjectName + '｜' + code);
+});
+
+if(entries.length > 30){
+    lines.push('');
+    lines.push('……其餘 ' + (entries.length - 30) + ' 筆請查看 Console（F12）');
+}
   lines.push('');
   lines.push('─────────────────────────────');
   lines.push('📊 Engine 2.0 統計摘要');
