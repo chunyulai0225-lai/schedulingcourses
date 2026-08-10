@@ -5238,9 +5238,23 @@ function displayEngine2Result(result){
   lines.push('Backtracking 修復：' + rpt.statistics.backtrackSuccessCount + ' 個');
   var avgScore = rpt.engineMetrics.averageCandidateScore;
   lines.push('平均 Candidate Score：' + (avgScore !== null ? avgScore : 'N/A'));
-  lines.push('耗時：' + elapsed + 'ms');
-  lines.push('');
-  lines.push('💡 修正建議（依優先級）：');
+  lines.push('⏱耗時：' + elapsed + ' ms');
+
+lines.push('');
+lines.push('📋 未排入任務：' + entries.length + ' 個');
+
+entries.forEach(function(e, i){
+  var className = e.className || '未知班級';
+  var subjectName = e.subjectName || '未知科目';
+  var code = e.primaryCause && e.primaryCause.failureCode
+    ? e.primaryCause.failureCode
+    : 'UNKNOWN';
+
+  lines.push((i + 1) + '. ' + className + '｜' + subjectName + '｜' + code);
+});
+
+lines.push('');
+lines.push('💡 修正建議（依優先級）：');
   var shown = new Set();
   entries.slice(0, 8).forEach(function(e){
     var code = e.primaryCause.failureCode;
