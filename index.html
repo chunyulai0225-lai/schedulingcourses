@@ -5144,6 +5144,21 @@ console.log(
     var peCtx    = engine2_buildContext(peTask, precomputed);
     var bestPe   = engine2_selectBestCandidate(peCands, peCtx);
 
+    console.log('[ChainMove CHECK]', {
+  task: task.classId + ' ' + task.subjectName,
+  moved: origCand.classId + ' ' + origCand.subjectName,
+  bestTask: !!bestTask,
+  taskCandidateCount: taskCands.length,
+  peCandidateCount: peCands.length,
+  bestPe: !!bestPe,
+  bestPeScore: bestPe ? bestPe.scoreResult.totalScore : null,
+  originalScore: pe.selected.scoreResult.totalScore,
+  degradation: bestPe
+    ? pe.selected.scoreResult.totalScore - bestPe.scoreResult.totalScore
+    : null,
+  maxDegradation: ENGINE2_MAX_SCORE_DEGRADATION
+});
+
     // ── pe 有直接落腳點
     if(bestPe){
       var degradation = pe.selected.scoreResult.totalScore - bestPe.scoreResult.totalScore;
