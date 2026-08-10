@@ -3843,6 +3843,14 @@ function engine2_createRepairLog({
  * 排序：RISKY 優先 → repairDifficulty 低 → confidence 低
  */
 function engine2_findRepairCandidates(failedTask, placedCandidates){
+  
+  console.log('[DEBUG RepairCandidates] START', {
+  classId: failedTask.classId,
+  subject: failedTask.subjectName,
+  teacherId: failedTask.teacherId,
+  placedCount: placedCandidates.length
+});
+  
   const filtered = placedCandidates.filter(pe => {
     const cand = pe.selected.candidate;
     const sr   = pe.selected.scoreResult;
