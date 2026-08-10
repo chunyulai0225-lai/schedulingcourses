@@ -4581,11 +4581,31 @@ function engine2_checkAllFailureCodes(failedTask, precomputed){
     if(dblCands.length === 0) codes.add('NO_DOUBLE_SLOT');
   }
 
-  // ── SUBJECT_IMPOSSIBLE：即使無老師/教室限制，仍找不到任何合法格子
-  // （年段封鎖 + 體育節次限制 + 等等使所有格子都不合法）
-  const ghostTask = {...failedTask, teacherId: null};
-  const ghostCands = engine2_buildSingleCandidates(ghostTask, new Set());
-  if(ghostCands.length === 0) codes.add('SUBJECT_IMPOSSIBLE');
+// ── SUBJECT_IMPOSSIBLE：只檢查「科目本身的固定 Hard Constraint」
+// 不考慮：目前課表已占用、教師衝堂、教師不可排、教室衝突。
+// 避免把「目前排不進去」誤判成「科目本身無解」。
+
+let intrinsicSlotCount = 0;
+
+DAYS.forEach(d => {
+  PERIODS.forEach(p => {
+
+    // 年段固定封鎖
+    if(isBlockedByBand(grade, d, p)) return;
+
+    // 體育不能排第4、5節
+    if(rule?.isPE && (p === 4 || p === 5)) return;
+
+    // 主科不排第7節
+    if(rule?.isMain && p === 7) return;
+
+    intrinsicSlotCount++;
+  });
+});
+
+if(intrinsicSlotCount === 0){
+  codes.add('SUBJECT_IMPOSSIBLE');
+}
 
   // ── ROOM_OVERLOADED（簡化判斷）：需要教室，且所有時段教室都滿
   if(needRoom && freeSlotCount > 0 && teacherFreeSlotCount > 0 && roomFreeSlotCount === 0){
