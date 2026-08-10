@@ -4970,7 +4970,8 @@ function engine2_smartSchedule(scheduleMode = 'full'){
   // （已內含於 engine2_runSchedulingLoop，此步驟為說明用）
 
   // ── Step 3–4：主排課迴圈（Phase 4 SchedulingLoop）
-  const loopResult = engine2_runSchedulingLoop(scheduleMode);
+  window._engine2LoopResult = engine2_runSchedulingLoop(scheduleMode);
+const loopResult = window._engine2LoopResult;
 
   // ── Step 5：Repair Engine（Phase 5）
   const repairResult = engine2_repairEngineV2(
