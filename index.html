@@ -2135,10 +2135,30 @@ function renderSchedule(){
   renderTeacherTable(); renderOverview();
 }
 function hasConflict(classId, key, teacherId){
+  // 沒有指定老師，不應該判定為老師衝堂
+  if(!teacherId) return false;
+
+  const targetClassId = String(classId);
+  const targetTeacherId = String(teacherId);
+
   for(const [cid, sch] of Object.entries(schedules)){
-    if(cid===classId) continue;
-    if(sch[key] && sch[key].teacherId===teacherId) return true;
+    // 排除自己班級
+    if(String(cid) === targetClassId) continue;
+
+    const cell = sch?.[key];
+    if(!cell) continue;
+
+    // 只有同一位老師在同一時段已有其他班課程，才算衝堂
+    if(
+      cell.teacherId &&
+      String(cell.teacherId) === targetTeacherId
+    ){
+      return true;
+    }
   }
+
+  return false;
+}
   return false;
 }
 function hasFixedConflict(classId, key, subject, teacherId){
