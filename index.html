@@ -470,6 +470,7 @@
         <button class="btn secondary" onclick="rescheduleAll()">🔄 全校重新排課</button>
         <button class="btn ghost" onclick="checkAllConflicts()">⚠ 檢查全校衝堂</button>
         <button class="btn" onclick="runEngine2SmartSchedule()" style="background:var(--teal);border-color:var(--teal);">🧠 智慧排課 2.0</button>
+        <button class="btn secondary" onclick="runEngine2MultiVersion()" title="重跑幾次排課，產生多個版本讓你比較後挑選">🧬 產生多版本</button>
         <button class="btn secondary" onclick="smartScheduleAll()" title="使用原始 v67 演算法">📋 智慧排課（v67）</button>
       </div>
       <div id="smart-progress-wrap" style="display:none;margin:8px 0;padding:10px 16px;background:#e8f5f0;border-radius:10px;font-family:'Noto Sans TC',sans-serif;font-size:14px;color:var(--teal);">
@@ -592,6 +593,16 @@
       <button class="btn secondary" onclick="clearCell()">清空</button>
       <button class="btn secondary" onclick="closeModal()">取消</button>
       <button class="btn" onclick="saveCell()">儲存</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="version-picker-modal">
+  <div class="modal" style="width:560px;max-height:90vh;overflow:auto;">
+    <h3>選擇要套用的排課版本</h3>
+    <div id="version-picker-body"></div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="closeEngine2VersionPicker()">關閉（不套用）</button>
     </div>
   </div>
 </div>
@@ -3398,6 +3409,10 @@ function engine2_getUsedDays(task){
  * @param {object}      context    - Phase 2 buildContext 的輸出
  * @returns {{ candidate, scoreResult } | null}
  */
+// 多版本產生時才會開啟：true 時，同分候選會隨機排序（見下方 shuffle），
+// 讓每次排課結果略有不同；平常單次排課維持原本決定性行為，不受影響。
+let engine2RandomTiebreak = false;
+
 function engine2_selectBestCandidate(candidates, context){
   if(!candidates || candidates.length === 0) return null;
 
@@ -3406,6 +3421,15 @@ function engine2_selectBestCandidate(candidates, context){
     candidate,
     scoreResult: engine2_calculateCandidateScore(candidate, context),
   }));
+
+  // 只有產生多版本時才會打亂順序（Fisher-Yates），讓同分候選的排列隨機化，
+  // 之後的 sort 是穩定排序，所以同分候選之間的相對順序就會是隨機的。
+  if(engine2RandomTiebreak){
+    for(let i = scored.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [scored[i], scored[j]] = [scored[j], scored[i]];
+    }
+  }
 
   // 依 totalScore 降序排列（高分在前）
   scored.sort((a, b) => b.scoreResult.totalScore - a.scoreResult.totalScore);
@@ -3687,7 +3711,7 @@ function engine2_runSchedulingLoop(scheduleMode = 'full'){
 // ── 1. Repair Engine 常數（來自規格書第七章 EngineProfile）
 const ENGINE2_MAX_SCORE_DEGRADATION      = 15;  // 允許的最大 Score 降幅
 const ENGINE2_REPAIR_TIME_BUDGET         = 100; // ms
-const ENGINE2_MAX_REPAIR_CANDIDATES      = 3;   // 最多搬動幾個 Candidate
+const ENGINE2_MAX_REPAIR_CANDIDATES      = 5;   // 最多搬動幾個 Candidate
 const ENGINE2_REPAIR_CONFIDENCE_THRESHOLD = 30; // confidence < 此值才允許搬動
 
 // ── 2. Snapshot 輔助（支援 simulateRepair 的無副作用模擬與 Rollback Safety）
@@ -3796,7 +3820,6 @@ function engine2_createRepairLog({
 function engine2_findRepairCandidates(failedTask, placedCandidates){
   const filtered = placedCandidates.filter(pe => {
     const cand = pe.selected.candidate;
-    const sr   = pe.selected.scoreResult;
 
     // locked 必須為 null（placeTask 放入的格子都是 null，但以防萬一還是檢查）
     const cellLocked = schedules[cand.classId]?.[`${cand.day}-${cand.period}`]?.locked;
@@ -3805,8 +3828,11 @@ function engine2_findRepairCandidates(failedTask, placedCandidates){
     // repairDifficulty < 8（7-8 = 連堂，仍可嘗試；9-10 = 不可搬）
     if((cand.repairDifficulty || 0) >= 8) return false;
 
-    // 不搬 SAFE Candidate（格子太珍貴）
-    if(sr.candidateType === 'SAFE') return false;
+    // 註：原本這裡會排除 SAFE Candidate（格子太珍貴，避免浪費嘗試次數）。
+    // 但實測發現：老師課表被排滿時，唯一能解開 TEACHER_CONFLICT 的候選
+    // 幾乎必然是 SAFE（因為老師本來選項就少），排除掉等於永遠無解。
+    // 真正的安全網是後面的 bestPe 落腳點檢查 + ENGINE2_MAX_SCORE_DEGRADATION，
+    // 不需要在這裡預先排除，所以移除這條限制。
 
     // 與失敗任務相關：同老師 or 同班級
     const sameTeacher = failedTask.teacherId && cand.teacherId === failedTask.teacherId;
@@ -3828,10 +3854,24 @@ function engine2_findRepairCandidates(failedTask, placedCandidates){
     return true;
   });
 
-  // 排序：RISKY first → repairDifficulty↑ → confidence↑
-  filtered.sort((a, b) => {
-    const sra = a.selected.scoreResult, srb = b.selected.scoreResult;
-    const ca  = a.selected.candidate,   cb  = b.selected.candidate;
+  // directHit：搬走這個 candidate 是否「直接」讓 failedTask 的老師在這個 day/period 有空
+  // （sameTeacher 一定是；僅 sameClass 則要看老師這時段是否本來就沒被別班占用）。
+  // 這只是排序時的優先權加成，不排除任何候選——避免像之前那樣，
+  // 因為某候選不是 directHit 就整個排除掉，結果連它自己能找到好去處這件事都沒機會被嘗試到。
+  const withDirectHit = filtered.map(pe => {
+    const cand = pe.selected.candidate;
+    const sameTeacher = failedTask.teacherId && cand.teacherId === failedTask.teacherId;
+    const directHit = !!sameTeacher || !failedTask.teacherId ||
+      !hasConflict(failedTask.classId, `${cand.day}-${cand.period}`, failedTask.teacherId);
+    return { pe, directHit };
+  });
+
+  // 排序：directHit 優先 → RISKY → repairDifficulty↑ → confidence↑
+  withDirectHit.sort((a, b) => {
+    const dh = (a.directHit ? 0 : 1) - (b.directHit ? 0 : 1);
+    if(dh !== 0) return dh;
+    const sra = a.pe.selected.scoreResult, srb = b.pe.selected.scoreResult;
+    const ca  = a.pe.selected.candidate,   cb  = b.pe.selected.candidate;
     const aR = sra.candidateType==='RISKY' ? 0 : 1;
     const bR = srb.candidateType==='RISKY' ? 0 : 1;
     if(aR !== bR) return aR - bR;
@@ -3840,7 +3880,9 @@ function engine2_findRepairCandidates(failedTask, placedCandidates){
     return (sra.confidence||0) - (srb.confidence||0);
   });
 
-  return filtered;
+  const sorted = withDirectHit.map(x => x.pe);
+
+  return sorted;
 }
 
 /**
@@ -5367,6 +5409,99 @@ window.exportLastEngine2Result = function(){
     console.error('[Engine 2.0] 匯出錯誤：', e);
   }
 };
+
+/**
+ * 產生多個排課版本。第一版維持原本決定性排法（跟單次「智慧排課 2.0」結果相同），
+ * 其餘版本開啟同分候選隨機排序，讓每個版本的排法可能不同，方便互相比較後挑選。
+ * 每一版都是從乾淨狀態（只保留固定/鎖定格）重新排起，彼此互不影響。
+ *
+ * @param {number} count        - 要產生的版本數
+ * @param {string} scheduleMode - 'full' 或 'specialist'
+ * @returns {Array} 每個元素：{ index, schedulesSnapshot, placedCount, failedCount, avgScore, elapsedMs, failedList }
+ */
+function engine2_generateScheduleVersions(count, scheduleMode){
+  const versions = [];
+  try{
+    for(let i = 0; i < count; i++){
+      engine2RandomTiebreak = (i > 0);
+      const result = engine2_smartSchedule(scheduleMode);
+      const rpt = result.failureReport;
+      versions.push({
+        index: i,
+        schedulesSnapshot: JSON.parse(JSON.stringify(schedules)),
+        placedCount: result.placedCandidates.length,
+        failedCount: result.failedTasks.length,
+        avgScore: rpt && rpt.engineMetrics ? rpt.engineMetrics.averageCandidateScore : null,
+        elapsedMs: result.elapsedMs,
+        failedList: (rpt && rpt.entries || []).map(e => e.className + '·' + e.subjectName),
+      });
+    }
+  } finally {
+    engine2RandomTiebreak = false;
+  }
+  return versions;
+}
+
+/* ── 多版本 UI 整合 ── */
+function runEngine2MultiVersion(){
+  const mode = typeof getScheduleMode === 'function' ? getScheduleMode() : 'full';
+  const VERSION_COUNT = 3;
+  setSaveStatus('🧬 產生 ' + VERSION_COUNT + ' 個排課版本中，請稍候...');
+  const progWrap = document.getElementById('smart-progress-wrap');
+  const prog     = document.getElementById('smart-progress');
+  if(progWrap) progWrap.style.display = 'block';
+  if(prog)     prog.textContent = '⏳ 產生 ' + VERSION_COUNT + ' 個排課版本中（每個版本都重新跑一次完整排課）...';
+
+  setTimeout(function(){
+    let versions;
+    try {
+      versions = engine2_generateScheduleVersions(VERSION_COUNT, mode);
+    } catch(e) {
+      setSaveStatus('❌ 產生版本錯誤：' + e.message, true);
+      if(progWrap) progWrap.style.display = 'none';
+      alert('產生版本錯誤：\n' + e.message);
+      return;
+    }
+    if(progWrap) progWrap.style.display = 'none';
+    setSaveStatus('✅ 已產生 ' + versions.length + ' 個版本，請選擇要套用哪一個');
+    window.lastEngine2Versions = versions;
+    renderEngine2VersionPicker(versions);
+  }, 80);
+}
+
+function renderEngine2VersionPicker(versions){
+  const body = document.getElementById('version-picker-body');
+  if(!body) return;
+  body.innerHTML = versions.map(function(v){
+    const statusLine = v.failedCount === 0
+      ? '<div style="color:#2f9e6e;font-size:13px;margin-top:4px;">✅ 全部排入</div>'
+      : '<div style="color:#c0554a;font-size:13px;margin-top:4px;">未排入（' + v.failedCount + '）：' + v.failedList.join('、') + '</div>';
+    return '<div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px;">'
+      + '<div style="font-weight:600;margin-bottom:6px;">版本 ' + (v.index + 1) + '</div>'
+      + '<div style="font-size:14px;">排入格數：' + v.placedCount
+        + '　未排入：' + v.failedCount
+        + '　平均分數：' + (v.avgScore !== null && v.avgScore !== undefined ? v.avgScore : 'N/A')
+        + '　耗時：' + v.elapsedMs + 'ms</div>'
+      + statusLine
+      + '<div class="modal-actions" style="margin-top:10px;"><button class="btn" onclick="applyEngine2Version(' + v.index + ')">套用這個版本</button></div>'
+      + '</div>';
+  }).join('');
+  document.getElementById('version-picker-modal').classList.add('show');
+}
+
+function applyEngine2Version(index){
+  const v = (window.lastEngine2Versions || [])[index];
+  if(!v){ alert('找不到這個版本，請重新產生。'); return; }
+  engine2_restoreSchedFromSnap(v.schedulesSnapshot);
+  closeEngine2VersionPicker();
+  onClassChange();
+  renderOverview();
+  setSaveStatus('✅ 已套用版本 ' + (index + 1));
+}
+
+function closeEngine2VersionPicker(){
+  document.getElementById('version-picker-modal').classList.remove('show');
+}
 
 
 
