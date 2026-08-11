@@ -3687,7 +3687,7 @@ function engine2_runSchedulingLoop(scheduleMode = 'full'){
 // ── 1. Repair Engine 常數（來自規格書第七章 EngineProfile）
 const ENGINE2_MAX_SCORE_DEGRADATION      = 15;  // 允許的最大 Score 降幅
 const ENGINE2_REPAIR_TIME_BUDGET         = 100; // ms
-const ENGINE2_MAX_REPAIR_CANDIDATES      = 3;   // 最多搬動幾個 Candidate
+const ENGINE2_MAX_REPAIR_CANDIDATES      = 5;   // 最多搬動幾個 Candidate
 const ENGINE2_REPAIR_CONFIDENCE_THRESHOLD = 30; // confidence < 此值才允許搬動
 
 // ── 2. Snapshot 輔助（支援 simulateRepair 的無副作用模擬與 Rollback Safety）
@@ -3828,10 +3828,24 @@ function engine2_findRepairCandidates(failedTask, placedCandidates){
     return true;
   });
 
-  // 排序：RISKY first → repairDifficulty↑ → confidence↑
-  filtered.sort((a, b) => {
-    const sra = a.selected.scoreResult, srb = b.selected.scoreResult;
-    const ca  = a.selected.candidate,   cb  = b.selected.candidate;
+  // directHit：搬走這個 candidate 是否「直接」讓 failedTask 的老師在這個 day/period 有空
+  // （sameTeacher 一定是；僅 sameClass 則要看老師這時段是否本來就沒被別班占用）。
+  // 這只是排序時的優先權加成，不排除任何候選——避免像之前那樣，
+  // 因為某候選不是 directHit 就整個排除掉，結果連它自己能找到好去處這件事都沒機會被嘗試到。
+  const withDirectHit = filtered.map(pe => {
+    const cand = pe.selected.candidate;
+    const sameTeacher = failedTask.teacherId && cand.teacherId === failedTask.teacherId;
+    const directHit = !!sameTeacher || !failedTask.teacherId ||
+      !hasConflict(failedTask.classId, `${cand.day}-${cand.period}`, failedTask.teacherId);
+    return { pe, directHit };
+  });
+
+  // 排序：directHit 優先 → RISKY → repairDifficulty↑ → confidence↑
+  withDirectHit.sort((a, b) => {
+    const dh = (a.directHit ? 0 : 1) - (b.directHit ? 0 : 1);
+    if(dh !== 0) return dh;
+    const sra = a.pe.selected.scoreResult, srb = b.pe.selected.scoreResult;
+    const ca  = a.pe.selected.candidate,   cb  = b.pe.selected.candidate;
     const aR = sra.candidateType==='RISKY' ? 0 : 1;
     const bR = srb.candidateType==='RISKY' ? 0 : 1;
     if(aR !== bR) return aR - bR;
@@ -3840,7 +3854,9 @@ function engine2_findRepairCandidates(failedTask, placedCandidates){
     return (sra.confidence||0) - (srb.confidence||0);
   });
 
-  return filtered;
+  const sorted = withDirectHit.map(x => x.pe);
+
+  return sorted;
 }
 
 /**
