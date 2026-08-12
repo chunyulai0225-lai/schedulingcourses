@@ -2148,7 +2148,17 @@ function renderSchedule(){
 function hasConflict(classId, key, teacherId){
   for(const [cid, sch] of Object.entries(schedules)){
     if(cid===classId) continue;
-    if(sch[key] && sch[key].teacherId===teacherId) return true;
+    const cell = sch[key];
+    if(!cell) continue;
+    if(cell.teacherId===teacherId) return true;
+    // 固定時段（社團活動／自由講堂／母語等）格子本身沒有記錄實際授課老師
+    // （見 applyFixedSlots，固定寫 teacherId:null），實際老師要另外查⑤配課的指定。
+    // 沒有這段的話，這位老師在社團/固定時段的忙碌狀態完全不會被排課引擎看見，
+    // 可能把他同時排進別班的正課，造成真正的衝堂。
+    if(cell.locked==='fixed'){
+      const fixedTeacherId = assignments[`${cid}|${cell.subject}`];
+      if(fixedTeacherId && fixedTeacherId===teacherId) return true;
+    }
   }
   return false;
 }
