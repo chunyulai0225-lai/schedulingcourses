@@ -2510,6 +2510,8 @@ function engine2_buildDoubleCandidates(task, usedDays = new Set()){
     if(usedDays.has(d)) return;
 
     for(let p = 1; p <= 6; p++){   // p+1 最多到 7
+      // Hard Constraint：第4、5節中間是午休，連堂不能橫跨（可以3-4節或5-6節，不能4-5節）
+      if(p === 4) continue;
       // Hard Constraint：年段時段封鎖（兩節都要檢查）
       if(isBlockedByBand(c.grade, d, p))   continue;
       if(isBlockedByBand(c.grade, d, p+1)) continue;
@@ -5628,6 +5630,8 @@ function tryPlaceDouble(classId, subjectName, teacherId, usedDaysForSubject){
   DAYS.forEach(d=>{
     if(usedDaysForSubject.has(d)) return;
     for(let p=1;p<=6;p++){
+      // Hard Constraint：第4、5節中間是午休，連堂不能橫跨（可以3-4節或5-6節，不能4-5節）
+      if(p === 4) continue;
       if(isBlockedByBand(c.grade, d, p) || isBlockedByBand(c.grade, d, p+1)) continue;
       const k1 = `${d}-${p}`, k2 = `${d}-${p+1}`;
       if(isOccupied(classId,k1) || isOccupied(classId,k2)) continue;
