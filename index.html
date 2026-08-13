@@ -2241,11 +2241,15 @@ const NATURE_ROOMS = ['自然632教室','自然711教室','自然813教室'];
 const COMPUTER_ROOMS = {mid:'電腦333教室', high:'電腦845教室'};
 const ROOM_SUBJECTS = ['自然科學','美勞','國際資訊交流'];
 
-// 依老師姓名決定使用哪間自然教室（兩位老師共用一間）
+// 依老師姓名決定使用哪間自然教室、以及固定使用單週或雙週
+// （每間教室固定由兩位老師輪流：一位只上單週、一位只上雙週，是老師之間協調好的實際安排，不能動態調整）
 const NATURE_TEACHER_ROOM = {
-  '詹庭瑜':'自然711教室', '李喬羚':'自然711教室',
-  '林雅惠':'自然813教室', '葉敏':'自然813教室',
-  '林盈汝':'自然632教室', '林怡潔':'自然632教室',
+  '詹庭瑜': {room:'自然711教室', parity:'單'},
+  '李喬羚': {room:'自然711教室', parity:'雙'},
+  '林雅惠': {room:'自然813教室', parity:'單'},
+  '葉敏':   {room:'自然813教室', parity:'雙'},
+  '林盈汝': {room:'自然632教室', parity:'單'},
+  '林怡潔': {room:'自然632教室', parity:'雙'},
 };
 // 美勞教室：只有特定老師需要，其他在班上上課不佔教室
 const ART_TEACHER_ROOM = {
@@ -2283,8 +2287,12 @@ function ensureRoomAssignment(classId, subjectName, teacherId){
   const tName = getTeacherName(teacherId);
 
   if(subjectName==='自然科學'){
-    // 依老師決定教室，然後在房間內以單/雙週均衡分配（恢復6個有效資源）
-    const room = NATURE_TEACHER_ROOM[tName] || (() => {
+    // 已知老師：教室＋單雙週是固定的（見 NATURE_TEACHER_ROOM），不可動態調整。
+    // 未知老師（不在名單內）：退回動態負載平衡，挑目前用最少人的教室+單雙週組合。
+    const fixed = NATURE_TEACHER_ROOM[tName];
+    if(fixed){
+      assignment = {room: fixed.room, parity: fixed.parity};
+    } else {
       const combos = [];
       NATURE_ROOMS.forEach(r=>{ ['單','雙'].forEach(p=>combos.push({room:r,parity:p})); });
       combos.sort((a,b)=>{
@@ -2292,11 +2300,8 @@ function ensureRoomAssignment(classId, subjectName, teacherId){
         const cb=Object.values(classRoomAssignment).filter(x=>x['自然科學']&&x['自然科學'].room===b.room&&x['自然科學'].parity===b.parity).length;
         return ca-cb;
       });
-      return combos[0].room;
-    })();
-    const singleCount = Object.values(classRoomAssignment).filter(m=>m['自然科學']&&m['自然科學'].room===room&&m['自然科學'].parity==='單').length;
-    const doubleCount = Object.values(classRoomAssignment).filter(m=>m['自然科學']&&m['自然科學'].room===room&&m['自然科學'].parity==='雙').length;
-    assignment = {room, parity: singleCount<=doubleCount?'單':'雙'};
+      assignment = combos[0];
+    }
   } else if(subjectName==='美勞'){
     const room = ART_TEACHER_ROOM[tName];
     if(room) assignment = {room};
@@ -6112,7 +6117,10 @@ function runAutoScheduleForClass(classId){
 /* ============ 總覽 ============ */
 /* ============ 報表輸出 ============ */
 const ROOM_INSTANCES = [
-  ...NATURE_ROOMS.map(room=>({id:room, room, subject:'自然科學', label:room})),
+  // 自然教室依單/雙週各算一個獨立資源（跟 isRoomSlotFree 的邏輯一致，3間教室 = 6個資源）
+  ...NATURE_ROOMS.flatMap(room => ['單','雙'].map(parity => ({
+    id: room + '-' + parity, room, subject: '自然科學', parity, label: room + '（' + parity + '週）',
+  }))),
   {id:'美勞712教室', room:'美勞712教室', subject:'美勞', label:'美勞712教室（黃舒瑾老師）'},
   {id:'美勞631教室', room:'美勞631教室', subject:'美勞', label:'美勞631教室（林宜慧老師）'},
   {id:COMPUTER_ROOMS.mid, room:COMPUTER_ROOMS.mid, subject:'國際資訊交流', label:COMPUTER_ROOMS.mid+'（三、四年級）'},
