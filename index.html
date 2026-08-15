@@ -168,6 +168,23 @@
   .report-grid td{border:1px solid #ccc;padding:6px;text-align:center;height:42px;vertical-align:middle;}
   .report-grid td .rsubj{font-weight:600;}
   .report-grid td .rwho{font-size:15px;color:#666;}
+  /* 本土語教室課表專用樣式 */
+  .mt-room-grid{width:100%;border-collapse:collapse;font-family:'Noto Sans TC',sans-serif;table-layout:fixed;}
+  .mt-room-grid th{background:var(--clay-deep);color:#fff;padding:8px 4px;text-align:center;font-size:14px;font-weight:600;}
+  .mt-room-grid td{border:1px solid #ccc;padding:8px 6px;text-align:center;vertical-align:middle;}
+  .mt-room-grid .mt-time-col{background:var(--sage-soft);font-weight:700;font-size:13px;width:13%;white-space:nowrap;}
+  .mt-room-grid .mt-time-sub{font-size:10px;color:#888;font-weight:400;display:block;margin-top:2px;}
+  .mt-room-grid .mt-lang{font-size:15px;font-weight:700;color:#4a3728;letter-spacing:0.5px;}
+  .mt-room-grid .mt-grade{font-size:12px;color:#7a6a5a;margin-top:3px;}
+  .mt-room-grid .mt-teacher{font-size:12px;color:#555;margin-top:4px;padding-top:4px;border-top:1px solid #e0d5cc;}
+  @media print{
+    .mt-room-grid th{font-size:12px;padding:5px 2px;}
+    .mt-room-grid .mt-time-col{font-size:11px;}
+    .mt-room-grid .mt-lang{font-size:13px;}
+    .mt-room-grid .mt-grade{font-size:11px;}
+    .mt-room-grid .mt-teacher{font-size:11px;}
+    .mt-room-grid td{padding:6px 3px;}
+  }
   @media print{
     @page { size: A4 portrait; margin: 15mm; }
     body.locked, header, .nav-group-wrap, .modal-bg{display:none !important;}
@@ -5916,7 +5933,8 @@ function getMtRoomLocations(){
 function buildMtRoomReportHTML(location){
   let rows = '';
   MT_PERIODS.forEach(period => {
-    rows += `<tr><td style="background:var(--sage-soft);font-weight:600;">${period.label}<br><span style="font-size:10px;color:#888;">${period.time||''}</span></td>`;
+    rows += `<tr>
+      <td class="mt-time-col">${period.label}<span class="mt-time-sub">${period.time||''}</span></td>`;
     DAYS.forEach(d => {
       const key = `${d}-${period.key}`;
       const entries = (motherTongueSchedule[key]||[]);
@@ -5925,18 +5943,24 @@ function buildMtRoomReportHTML(location){
       let cell = '';
       if(match.length > 0){
         cell = match.map(e =>
-          `<div class="rsubj">${e.lang||''}${e.group ? '・'+e.group : ''}</div>` +
-          `<div class="rwho">${e.teacher||''}</div>`
-        ).join('<hr style="margin:2px 0;border:none;border-top:1px solid #eee;">');
+          `<div class="mt-lang">${e.lang||''}</div>` +
+          `<div class="mt-grade">${e.group||''}</div>` +
+          `<div class="mt-teacher">${e.teacher||''}</div>`
+        ).join('<div style="border-top:1px dashed #ccc;margin:4px 0;"></div>');
       }
       rows += `<td>${cell}</td>`;
     });
     rows += '</tr>';
   });
   return `<div class="report-page">
-    <h3>苗栗縣頭份市后庄國民小學　第一學期　${location}　本土語文課程表</h3>
-    <table class="report-grid">
-      <tr><th>時段</th>${DAYS.map(d=>`<th>星期${d}</th>`).join('')}</tr>
+    <h3 style="font-family:'Noto Serif TC',serif;font-size:16px;text-align:center;margin:0 0 14px;letter-spacing:1px;">
+      苗栗縣頭份市后庄國民小學　第一學期　${location}　本土語文課程表
+    </h3>
+    <table class="mt-room-grid">
+      <tr>
+        <th style="width:13%;">時段</th>
+        ${DAYS.map(d=>`<th style="width:17.4%;">星期${d}</th>`).join('')}
+      </tr>
       ${rows}
     </table>
   </div>`;
