@@ -585,7 +585,7 @@
   <div class="modal">
     <h3 id="modal-title">編輯課程格</h3>
     <label>科目</label>
-    <select id="modal-subject"></select>
+    <select id="modal-subject" onchange="updateModalTeacherOptions()"></select>
     <label>授課教師</label>
     <select id="modal-teacher"></select>
     <label><input type="checkbox" id="modal-lock" style="width:auto;margin-right:6px">鎖定此格（自動排課不會更動）</label>
@@ -2195,6 +2195,56 @@ function clearClassSchedule(){
 
 /* ============ modal ============ */
 let modalCtx = null;
+
+// 這一班所有科目、任何一科有配課指定過的老師（去重）
+function assignedTeacherIdsForClass(classId){
+  const ids = new Set();
+  Object.entries(assignments).forEach(([k, tid]) => {
+    if(tid && k.startsWith(classId + '|')) ids.add(tid);
+  });
+  return ids;
+}
+
+// 產生「授課教師」下拉選單的 HTML：優先顯示「這個科目配課指定的老師」，
+// 其次是「這一班其他科目配課過的老師」，最後才是全校其他老師——
+// 三種都還是能選到，只是把最可能要選的人排到最前面、分組標示，減少手動排課時要找很久的問題。
+function buildModalTeacherOptionsHTML(classId, subjectName){
+  const specificId = subjectName ? (assignments[`${classId}|${subjectName}`] || null) : null;
+  const classIds = assignedTeacherIdsForClass(classId);
+  let html = '<option value="">（不指定 / 導師自填）</option>';
+
+  if(specificId){
+    const t = teachers.find(x=>x.id===specificId);
+    if(t) html += `<optgroup label="這個科目的配課老師"><option value="${t.id}">${t.name}（${t.role}）</option></optgroup>`;
+  }
+  const restClassTeachers = teachers.filter(t => classIds.has(t.id) && t.id !== specificId);
+  if(restClassTeachers.length){
+    html += '<optgroup label="本班配課老師">'
+      + restClassTeachers.map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('')
+      + '</optgroup>';
+  }
+  const otherTeachers = teachers.filter(t => !classIds.has(t.id) && t.id !== specificId);
+  html += '<optgroup label="全部教師">'
+    + otherTeachers.map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('')
+    + '</optgroup>';
+  return html;
+}
+
+// 科目下拉選單改變時，重新篩選/排序老師下拉選單
+function updateModalTeacherOptions(){
+  if(!modalCtx) return;
+  const subjSel = document.getElementById('modal-subject');
+  const tSel = document.getElementById('modal-teacher');
+  const prevValue = tSel.value;
+  tSel.innerHTML = buildModalTeacherOptionsHTML(modalCtx.classId, subjSel.value);
+  if([...tSel.options].some(o => o.value === prevValue)){
+    tSel.value = prevValue; // 原本選的老師還在名單裡，保留原選擇
+  } else {
+    const specificId = subjSel.value ? (assignments[`${modalCtx.classId}|${subjSel.value}`] || null) : null;
+    if(specificId) tSel.value = specificId; // 換科目後自動帶入這科目的配課老師
+  }
+}
+
 function openModal(classId, key, lockState){
   if(lockState==='fixed' || lockState==='pullout') return;
   modalCtx = {classId, key};
@@ -2203,11 +2253,11 @@ function openModal(classId, key, lockState){
   const subjSel = document.getElementById('modal-subject');
   const editableSubjects = subjects.filter(s=>!s.locked && (s.band===band || s.band==='all'));
   subjSel.innerHTML = '<option value="">— 選擇科目 —</option>' + editableSubjects.map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
-  const tSel = document.getElementById('modal-teacher');
-  tSel.innerHTML = '<option value="">（不指定 / 導師自填）</option>' + teachers.map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('');
-
   const existing = schedules[classId][key];
-  if(existing){ subjSel.value = existing.subject; tSel.value = existing.teacherId||''; }
+  if(existing){ subjSel.value = existing.subject; }
+  const tSel = document.getElementById('modal-teacher');
+  tSel.innerHTML = buildModalTeacherOptionsHTML(classId, subjSel.value);
+  if(existing){ tSel.value = existing.teacherId||''; }
   document.getElementById('modal-lock').checked = lockState==='manual';
 
   const [day, period] = key.split('-');
