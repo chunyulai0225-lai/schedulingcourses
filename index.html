@@ -168,25 +168,7 @@
   .report-grid td{border:1px solid #ccc;padding:6px;text-align:center;height:42px;vertical-align:middle;}
   .report-grid td .rsubj{font-weight:600;}
   .report-grid td .rwho{font-size:15px;color:#666;}
-  /* 本土語教室課表專用樣式 */
-  .mt-room-grid{width:100%;border-collapse:collapse;font-family:'Noto Sans TC',sans-serif;table-layout:fixed;}
-  .mt-room-grid th{background:var(--clay-deep);color:#fff;padding:8px 4px;text-align:center;font-size:14px;font-weight:600;}
-  .mt-room-grid td{border:1px solid #ccc;padding:8px 6px;text-align:center;vertical-align:middle;}
-  .mt-room-grid .mt-time-col{background:var(--sage-soft);font-weight:700;font-size:13px;width:13%;white-space:nowrap;}
-  .mt-room-grid .mt-time-sub{font-size:10px;color:#888;font-weight:400;display:block;margin-top:2px;}
-  .mt-room-grid .mt-lang{font-size:15px;font-weight:700;color:#4a3728;letter-spacing:0.5px;}
-  .mt-room-grid .mt-grade{font-size:12px;color:#7a6a5a;margin-top:3px;}
-  .mt-room-grid .mt-teacher{font-size:12px;color:#555;margin-top:4px;padding-top:4px;border-top:1px solid #e0d5cc;}
   @media print{
-    .mt-room-grid th{font-size:12px;padding:5px 2px;}
-    .mt-room-grid .mt-time-col{font-size:11px;}
-    .mt-room-grid .mt-lang{font-size:13px;}
-    .mt-room-grid .mt-grade{font-size:11px;}
-    .mt-room-grid .mt-teacher{font-size:11px;}
-    .mt-room-grid td{padding:6px 3px;}
-  }
-  @media print{
-    @page { size: A4 portrait; margin: 15mm; }
     body.locked, header, .nav-group-wrap, .modal-bg{display:none !important;}
     main{padding:0;max-width:100%;}
     .panel{display:none !important;}
@@ -488,6 +470,7 @@
         <button class="btn secondary" onclick="rescheduleAll()">🔄 全校重新排課</button>
         <button class="btn ghost" onclick="checkAllConflicts()">⚠ 檢查全校衝堂</button>
         <button class="btn" onclick="runEngine2SmartSchedule()" style="background:var(--teal);border-color:var(--teal);">🧠 智慧排課 2.0</button>
+        <button class="btn secondary" onclick="runEngine2MultiVersion()" title="重跑幾次排課，產生多個版本讓你比較後挑選">🧬 產生多版本</button>
         <button class="btn secondary" onclick="smartScheduleAll()" title="使用原始 v67 演算法">📋 智慧排課（v67）</button>
       </div>
       <div id="smart-progress-wrap" style="display:none;margin:8px 0;padding:10px 16px;background:#e8f5f0;border-radius:10px;font-family:'Noto Sans TC',sans-serif;font-size:14px;color:var(--teal);">
@@ -602,7 +585,7 @@
   <div class="modal">
     <h3 id="modal-title">編輯課程格</h3>
     <label>科目</label>
-    <select id="modal-subject"></select>
+    <select id="modal-subject" onchange="updateModalTeacherOptions()"></select>
     <label>授課教師</label>
     <select id="modal-teacher"></select>
     <label><input type="checkbox" id="modal-lock" style="width:auto;margin-right:6px">鎖定此格（自動排課不會更動）</label>
@@ -610,6 +593,16 @@
       <button class="btn secondary" onclick="clearCell()">清空</button>
       <button class="btn secondary" onclick="closeModal()">取消</button>
       <button class="btn" onclick="saveCell()">儲存</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="version-picker-modal">
+  <div class="modal" style="width:560px;max-height:90vh;overflow:auto;">
+    <h3>選擇要套用的排課版本</h3>
+    <div id="version-picker-body"></div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="closeEngine2VersionPicker()">關閉（不套用）</button>
     </div>
   </div>
 </div>
@@ -2155,7 +2148,17 @@ function renderSchedule(){
 function hasConflict(classId, key, teacherId){
   for(const [cid, sch] of Object.entries(schedules)){
     if(cid===classId) continue;
-    if(sch[key] && sch[key].teacherId===teacherId) return true;
+    const cell = sch[key];
+    if(!cell) continue;
+    if(cell.teacherId===teacherId) return true;
+    // 固定時段（社團活動／自由講堂／母語等）格子本身沒有記錄實際授課老師
+    // （見 applyFixedSlots，固定寫 teacherId:null），實際老師要另外查⑤配課的指定。
+    // 沒有這段的話，這位老師在社團/固定時段的忙碌狀態完全不會被排課引擎看見，
+    // 可能把他同時排進別班的正課，造成真正的衝堂。
+    if(cell.locked==='fixed'){
+      const fixedTeacherId = assignments[`${cid}|${cell.subject}`];
+      if(fixedTeacherId && fixedTeacherId===teacherId) return true;
+    }
   }
   return false;
 }
@@ -2192,6 +2195,56 @@ function clearClassSchedule(){
 
 /* ============ modal ============ */
 let modalCtx = null;
+
+// 這一班所有科目、任何一科有配課指定過的老師（去重）
+function assignedTeacherIdsForClass(classId){
+  const ids = new Set();
+  Object.entries(assignments).forEach(([k, tid]) => {
+    if(tid && k.startsWith(classId + '|')) ids.add(tid);
+  });
+  return ids;
+}
+
+// 產生「授課教師」下拉選單的 HTML：優先顯示「這個科目配課指定的老師」，
+// 其次是「這一班其他科目配課過的老師」，最後才是全校其他老師——
+// 三種都還是能選到，只是把最可能要選的人排到最前面、分組標示，減少手動排課時要找很久的問題。
+function buildModalTeacherOptionsHTML(classId, subjectName){
+  const specificId = subjectName ? (assignments[`${classId}|${subjectName}`] || null) : null;
+  const classIds = assignedTeacherIdsForClass(classId);
+  let html = '<option value="">（不指定 / 導師自填）</option>';
+
+  if(specificId){
+    const t = teachers.find(x=>x.id===specificId);
+    if(t) html += `<optgroup label="這個科目的配課老師"><option value="${t.id}">${t.name}（${t.role}）</option></optgroup>`;
+  }
+  const restClassTeachers = teachers.filter(t => classIds.has(t.id) && t.id !== specificId);
+  if(restClassTeachers.length){
+    html += '<optgroup label="本班配課老師">'
+      + restClassTeachers.map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('')
+      + '</optgroup>';
+  }
+  const otherTeachers = teachers.filter(t => !classIds.has(t.id) && t.id !== specificId);
+  html += '<optgroup label="全部教師">'
+    + otherTeachers.map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('')
+    + '</optgroup>';
+  return html;
+}
+
+// 科目下拉選單改變時，重新篩選/排序老師下拉選單
+function updateModalTeacherOptions(){
+  if(!modalCtx) return;
+  const subjSel = document.getElementById('modal-subject');
+  const tSel = document.getElementById('modal-teacher');
+  const prevValue = tSel.value;
+  tSel.innerHTML = buildModalTeacherOptionsHTML(modalCtx.classId, subjSel.value);
+  if([...tSel.options].some(o => o.value === prevValue)){
+    tSel.value = prevValue; // 原本選的老師還在名單裡，保留原選擇
+  } else {
+    const specificId = subjSel.value ? (assignments[`${modalCtx.classId}|${subjSel.value}`] || null) : null;
+    if(specificId) tSel.value = specificId; // 換科目後自動帶入這科目的配課老師
+  }
+}
+
 function openModal(classId, key, lockState){
   if(lockState==='fixed' || lockState==='pullout') return;
   modalCtx = {classId, key};
@@ -2200,11 +2253,11 @@ function openModal(classId, key, lockState){
   const subjSel = document.getElementById('modal-subject');
   const editableSubjects = subjects.filter(s=>!s.locked && (s.band===band || s.band==='all'));
   subjSel.innerHTML = '<option value="">— 選擇科目 —</option>' + editableSubjects.map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
-  const tSel = document.getElementById('modal-teacher');
-  tSel.innerHTML = '<option value="">（不指定 / 導師自填）</option>' + teachers.map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('');
-
   const existing = schedules[classId][key];
-  if(existing){ subjSel.value = existing.subject; tSel.value = existing.teacherId||''; }
+  if(existing){ subjSel.value = existing.subject; }
+  const tSel = document.getElementById('modal-teacher');
+  tSel.innerHTML = buildModalTeacherOptionsHTML(classId, subjSel.value);
+  if(existing){ tSel.value = existing.teacherId||''; }
   document.getElementById('modal-lock').checked = lockState==='manual';
 
   const [day, period] = key.split('-');
@@ -2238,11 +2291,15 @@ const NATURE_ROOMS = ['自然632教室','自然711教室','自然813教室'];
 const COMPUTER_ROOMS = {mid:'電腦333教室', high:'電腦845教室'};
 const ROOM_SUBJECTS = ['自然科學','美勞','國際資訊交流'];
 
-// 依老師姓名決定使用哪間自然教室（兩位老師共用一間）
+// 依老師姓名決定使用哪間自然教室、以及固定使用單週或雙週
+// （每間教室固定由兩位老師輪流：一位只上單週、一位只上雙週，是老師之間協調好的實際安排，不能動態調整）
 const NATURE_TEACHER_ROOM = {
-  '詹庭瑜':'自然711教室', '李喬羚':'自然711教室',
-  '林雅惠':'自然813教室', '葉敏':'自然813教室',
-  '林盈汝':'自然632教室', '林怡潔':'自然632教室',
+  '詹庭瑜': {room:'自然711教室', parity:'單'},
+  '李喬羚': {room:'自然711教室', parity:'雙'},
+  '林雅惠': {room:'自然813教室', parity:'單'},
+  '葉敏':   {room:'自然813教室', parity:'雙'},
+  '林盈汝': {room:'自然632教室', parity:'單'},
+  '林怡潔': {room:'自然632教室', parity:'雙'},
 };
 // 美勞教室：只有特定老師需要，其他在班上上課不佔教室
 const ART_TEACHER_ROOM = {
@@ -2280,8 +2337,12 @@ function ensureRoomAssignment(classId, subjectName, teacherId){
   const tName = getTeacherName(teacherId);
 
   if(subjectName==='自然科學'){
-    // 依老師決定教室，然後在房間內以單/雙週均衡分配（恢復6個有效資源）
-    const room = NATURE_TEACHER_ROOM[tName] || (() => {
+    // 已知老師：教室＋單雙週是固定的（見 NATURE_TEACHER_ROOM），不可動態調整。
+    // 未知老師（不在名單內）：退回動態負載平衡，挑目前用最少人的教室+單雙週組合。
+    const fixed = NATURE_TEACHER_ROOM[tName];
+    if(fixed){
+      assignment = {room: fixed.room, parity: fixed.parity};
+    } else {
       const combos = [];
       NATURE_ROOMS.forEach(r=>{ ['單','雙'].forEach(p=>combos.push({room:r,parity:p})); });
       combos.sort((a,b)=>{
@@ -2289,11 +2350,8 @@ function ensureRoomAssignment(classId, subjectName, teacherId){
         const cb=Object.values(classRoomAssignment).filter(x=>x['自然科學']&&x['自然科學'].room===b.room&&x['自然科學'].parity===b.parity).length;
         return ca-cb;
       });
-      return combos[0].room;
-    })();
-    const singleCount = Object.values(classRoomAssignment).filter(m=>m['自然科學']&&m['自然科學'].room===room&&m['自然科學'].parity==='單').length;
-    const doubleCount = Object.values(classRoomAssignment).filter(m=>m['自然科學']&&m['自然科學'].room===room&&m['自然科學'].parity==='雙').length;
-    assignment = {room, parity: singleCount<=doubleCount?'單':'雙'};
+      assignment = combos[0];
+    }
   } else if(subjectName==='美勞'){
     const room = ART_TEACHER_ROOM[tName];
     if(room) assignment = {room};
@@ -2507,6 +2565,8 @@ function engine2_buildDoubleCandidates(task, usedDays = new Set()){
     if(usedDays.has(d)) return;
 
     for(let p = 1; p <= 6; p++){   // p+1 最多到 7
+      // Hard Constraint：第4、5節中間是午休，連堂不能橫跨（可以3-4節或5-6節，不能4-5節）
+      if(p === 4) continue;
       // Hard Constraint：年段時段封鎖（兩節都要檢查）
       if(isBlockedByBand(c.grade, d, p))   continue;
       if(isBlockedByBand(c.grade, d, p+1)) continue;
@@ -3416,6 +3476,10 @@ function engine2_getUsedDays(task){
  * @param {object}      context    - Phase 2 buildContext 的輸出
  * @returns {{ candidate, scoreResult } | null}
  */
+// 多版本產生時才會開啟：true 時，同分候選會隨機排序（見下方 shuffle），
+// 讓每次排課結果略有不同；平常單次排課維持原本決定性行為，不受影響。
+let engine2RandomTiebreak = false;
+
 function engine2_selectBestCandidate(candidates, context){
   if(!candidates || candidates.length === 0) return null;
 
@@ -3424,6 +3488,15 @@ function engine2_selectBestCandidate(candidates, context){
     candidate,
     scoreResult: engine2_calculateCandidateScore(candidate, context),
   }));
+
+  // 只有產生多版本時才會打亂順序（Fisher-Yates），讓同分候選的排列隨機化，
+  // 之後的 sort 是穩定排序，所以同分候選之間的相對順序就會是隨機的。
+  if(engine2RandomTiebreak){
+    for(let i = scored.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [scored[i], scored[j]] = [scored[j], scored[i]];
+    }
+  }
 
   // 依 totalScore 降序排列（高分在前）
   scored.sort((a, b) => b.scoreResult.totalScore - a.scoreResult.totalScore);
@@ -3490,6 +3563,7 @@ function engine2_markFailedTask(task, failedTasks){
     classId:     task.classId,
     subjectName: task.subjectName,
     teacherId:   task.teacherId,
+    rule:        task.rule,
     remainingPeriods: task.remainingPeriods,
     isTeacherBottleneck: task.isTeacherBottleneck,
     // failureCode 留給 Phase 6 Failure Diagnosis 填入
@@ -3704,7 +3778,7 @@ function engine2_runSchedulingLoop(scheduleMode = 'full'){
 // ── 1. Repair Engine 常數（來自規格書第七章 EngineProfile）
 const ENGINE2_MAX_SCORE_DEGRADATION      = 15;  // 允許的最大 Score 降幅
 const ENGINE2_REPAIR_TIME_BUDGET         = 100; // ms
-const ENGINE2_MAX_REPAIR_CANDIDATES      = 3;   // 最多搬動幾個 Candidate
+const ENGINE2_MAX_REPAIR_CANDIDATES      = 5;   // 最多搬動幾個 Candidate
 const ENGINE2_REPAIR_CONFIDENCE_THRESHOLD = 30; // confidence < 此值才允許搬動
 
 // ── 2. Snapshot 輔助（支援 simulateRepair 的無副作用模擬與 Rollback Safety）
@@ -3813,7 +3887,6 @@ function engine2_createRepairLog({
 function engine2_findRepairCandidates(failedTask, placedCandidates){
   const filtered = placedCandidates.filter(pe => {
     const cand = pe.selected.candidate;
-    const sr   = pe.selected.scoreResult;
 
     // locked 必須為 null（placeTask 放入的格子都是 null，但以防萬一還是檢查）
     const cellLocked = schedules[cand.classId]?.[`${cand.day}-${cand.period}`]?.locked;
@@ -3822,25 +3895,50 @@ function engine2_findRepairCandidates(failedTask, placedCandidates){
     // repairDifficulty < 8（7-8 = 連堂，仍可嘗試；9-10 = 不可搬）
     if((cand.repairDifficulty || 0) >= 8) return false;
 
-    // confidence < threshold（信心低才值得搬）
-    const conf = sr.confidence;
-    if(conf !== null && conf !== undefined && conf >= ENGINE2_REPAIR_CONFIDENCE_THRESHOLD) return false;
-
-    // 不搬 SAFE Candidate（格子太珍貴）
-    if(sr.candidateType === 'SAFE') return false;
+    // 註：原本這裡會排除 SAFE Candidate（格子太珍貴，避免浪費嘗試次數）。
+    // 但實測發現：老師課表被排滿時，唯一能解開 TEACHER_CONFLICT 的候選
+    // 幾乎必然是 SAFE（因為老師本來選項就少），排除掉等於永遠無解。
+    // 真正的安全網是後面的 bestPe 落腳點檢查 + ENGINE2_MAX_SCORE_DEGRADATION，
+    // 不需要在這裡預先排除，所以移除這條限制。
 
     // 與失敗任務相關：同老師 or 同班級
     const sameTeacher = failedTask.teacherId && cand.teacherId === failedTask.teacherId;
     const sameClass   = cand.classId === failedTask.classId;
     if(!sameTeacher && !sameClass) return false;
 
+    // 搬走這個 candidate 是否真的能讓 failedTask 有機會用到這個 day/period？
+    // - sameClass：candidate 本身就佔用 failedTask 班級的格子，搬走後這格自然釋出，一定相關。
+    // - 僅 sameTeacher（非 sameClass）：搬走它只是讓「老師」在這個 day/period 空出來，
+    //   若 failedTask 班級在這個 day/period 本來就沒有空格（被其他課占用或被年段封鎖），
+    //   搬走也無濟於事，必須排除，否則會佔用 ENGINE2_MAX_REPAIR_CANDIDATES 的名額。
+    if(!sameClass){
+      const failedClass = classes.find(x => x.id === failedTask.classId);
+      if(!failedClass) return false;
+      if(isBlockedByBand(failedClass.grade, cand.day, cand.period)) return false;
+      if(isOccupied(failedTask.classId, `${cand.day}-${cand.period}`)) return false;
+    }
+
     return true;
   });
 
-  // 排序：RISKY first → repairDifficulty↑ → confidence↑
-  filtered.sort((a, b) => {
-    const sra = a.selected.scoreResult, srb = b.selected.scoreResult;
-    const ca  = a.selected.candidate,   cb  = b.selected.candidate;
+  // directHit：搬走這個 candidate 是否「直接」讓 failedTask 的老師在這個 day/period 有空
+  // （sameTeacher 一定是；僅 sameClass 則要看老師這時段是否本來就沒被別班占用）。
+  // 這只是排序時的優先權加成，不排除任何候選——避免像之前那樣，
+  // 因為某候選不是 directHit 就整個排除掉，結果連它自己能找到好去處這件事都沒機會被嘗試到。
+  const withDirectHit = filtered.map(pe => {
+    const cand = pe.selected.candidate;
+    const sameTeacher = failedTask.teacherId && cand.teacherId === failedTask.teacherId;
+    const directHit = !!sameTeacher || !failedTask.teacherId ||
+      !hasConflict(failedTask.classId, `${cand.day}-${cand.period}`, failedTask.teacherId);
+    return { pe, directHit };
+  });
+
+  // 排序：directHit 優先 → RISKY → repairDifficulty↑ → confidence↑
+  withDirectHit.sort((a, b) => {
+    const dh = (a.directHit ? 0 : 1) - (b.directHit ? 0 : 1);
+    if(dh !== 0) return dh;
+    const sra = a.pe.selected.scoreResult, srb = b.pe.selected.scoreResult;
+    const ca  = a.pe.selected.candidate,   cb  = b.pe.selected.candidate;
     const aR = sra.candidateType==='RISKY' ? 0 : 1;
     const bR = srb.candidateType==='RISKY' ? 0 : 1;
     if(aR !== bR) return aR - bR;
@@ -3849,7 +3947,9 @@ function engine2_findRepairCandidates(failedTask, placedCandidates){
     return (sra.confidence||0) - (srb.confidence||0);
   });
 
-  return filtered;
+  const sorted = withDirectHit.map(x => x.pe);
+
+  return sorted;
 }
 
 /**
@@ -5017,9 +5117,21 @@ function engine2_doChainMove(task, placedCandidates, precomputed, depth, maxDept
     .filter(function(pe){ return !inChain.has(pe); });
   var toTry = movable.slice(0, ENGINE2_MAX_REPAIR_CANDIDATES);
 
+  // [ChainMove DEBUG] 暫時性診斷 log，驗證完成後可移除
+  console.log('[ChainMove DEBUG] ENTER ' + JSON.stringify({
+    task: task.classId + ' ' + task.subjectName, depth: depth,
+    movable: movable.length, toTry: toTry.length,
+  }));
+
   for(var i = 0; i < toTry.length; i++){
     var pe       = toTry[i];
     var origCand = pe.selected.candidate;
+
+    // [ChainMove DEBUG]
+    console.log('[ChainMove DEBUG] TRY CANDIDATE ' + JSON.stringify({
+      task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+      pe: origCand.classId + ' ' + origCand.subjectName + ' ' + origCand.day + '-' + origCand.period + ' teacher=' + origCand.teacherId,
+    }));
 
     // ── 快照（確保失敗時可以完整還原）
     var schedSnap = JSON.parse(JSON.stringify(schedules));
@@ -5037,6 +5149,14 @@ function engine2_doChainMove(task, placedCandidates, precomputed, depth, maxDept
     var taskCands    = engine2_buildCandidates(task, taskUsedDays);
     var taskCtx      = engine2_buildContext(task, precomputed);
     var bestTask     = engine2_selectBestCandidate(taskCands, taskCtx);
+
+    // [ChainMove DEBUG]
+    console.log('[ChainMove DEBUG] bestTask ' + JSON.stringify({
+      task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+      taskCandsCount: taskCands.length,
+      bestTaskFound: !!bestTask,
+      bestTaskSlot: bestTask ? (bestTask.candidate.day + '-' + bestTask.candidate.period) : null,
+    }));
 
     if(!bestTask){
       engine2_restoreSchedFromSnap(schedSnap);
@@ -5068,10 +5188,23 @@ function engine2_doChainMove(task, placedCandidates, precomputed, depth, maxDept
     var peCtx    = engine2_buildContext(peTask, precomputed);
     var bestPe   = engine2_selectBestCandidate(peCands, peCtx);
 
+    // [ChainMove DEBUG]
+    console.log('[ChainMove DEBUG] bestPe ' + JSON.stringify({
+      task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+      peCandsCount: peCands.length,
+      bestPeFound: !!bestPe,
+      degradation: bestPe ? (pe.selected.scoreResult.totalScore - bestPe.scoreResult.totalScore) : null,
+      maxAllowed: ENGINE2_MAX_SCORE_DEGRADATION,
+    }));
+
     // ── pe 有直接落腳點
     if(bestPe){
       var degradation = pe.selected.scoreResult.totalScore - bestPe.scoreResult.totalScore;
       if(degradation <= ENGINE2_MAX_SCORE_DEGRADATION){
+        // [ChainMove DEBUG]
+        console.log('[ChainMove DEBUG] SUCCESS (direct landing) ' + JSON.stringify({
+          task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+        }));
         // 成功：永久放入 pe 的新位置
         if(!schedules[bestPe.candidate.classId]) schedules[bestPe.candidate.classId] = {};
         schedules[bestPe.candidate.classId][bestPe.candidate.day + '-' + bestPe.candidate.period] =
@@ -5099,12 +5232,29 @@ function engine2_doChainMove(task, placedCandidates, precomputed, depth, maxDept
 
     // ── pe 找不到直接落腳點，嘗試連鎖（depth + 1）
     if(depth < maxDepth){
+      // [ChainMove DEBUG]
+      console.log('[ChainMove DEBUG] RECURSE ' + JSON.stringify({
+        task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+        nextDepth: depth + 1,
+        peTask: peTask.classId + ' ' + peTask.subjectName,
+      }));
+
       inChain.add(pe);
       var chainOk = engine2_doChainMove(peTask, placedCandidates, precomputed,
                                         depth + 1, maxDepth, inChain);
       inChain.delete(pe);
 
+      // [ChainMove DEBUG]
+      console.log('[ChainMove DEBUG] RECURSE RESULT ' + JSON.stringify({
+        task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+        chainOk: chainOk,
+      }));
+
       if(chainOk){
+        // [ChainMove DEBUG]
+        console.log('[ChainMove DEBUG] SUCCESS (via recursion) ' + JSON.stringify({
+          task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+        }));
         // pe 已被連鎖修復，task 已佔位（已放入 schedules），更新 placedCandidates
         var peOrigIdx = placedCandidates.indexOf(pe);
         if(peOrigIdx >= 0) placedCandidates.splice(peOrigIdx, 1);
@@ -5126,7 +5276,17 @@ function engine2_doChainMove(task, placedCandidates, precomputed, depth, maxDept
     engine2_restoreSchedFromSnap(schedSnap);
     placedCandidates.length = 0;
     pcSnap.forEach(function(e){ placedCandidates.push(e); });
+
+    // [ChainMove DEBUG]
+    console.log('[ChainMove DEBUG] CANDIDATE FAILED, ROLLED BACK ' + JSON.stringify({
+      task: task.classId + ' ' + task.subjectName, depth: depth, i: i,
+    }));
   }
+
+  // [ChainMove DEBUG]
+  console.log('[ChainMove DEBUG] EXIT false (all candidates exhausted) ' + JSON.stringify({
+    task: task.classId + ' ' + task.subjectName, depth: depth,
+  }));
 
   return false;
 }
@@ -5317,6 +5477,99 @@ window.exportLastEngine2Result = function(){
   }
 };
 
+/**
+ * 產生多個排課版本。第一版維持原本決定性排法（跟單次「智慧排課 2.0」結果相同），
+ * 其餘版本開啟同分候選隨機排序，讓每個版本的排法可能不同，方便互相比較後挑選。
+ * 每一版都是從乾淨狀態（只保留固定/鎖定格）重新排起，彼此互不影響。
+ *
+ * @param {number} count        - 要產生的版本數
+ * @param {string} scheduleMode - 'full' 或 'specialist'
+ * @returns {Array} 每個元素：{ index, schedulesSnapshot, placedCount, failedCount, avgScore, elapsedMs, failedList }
+ */
+function engine2_generateScheduleVersions(count, scheduleMode){
+  const versions = [];
+  try{
+    for(let i = 0; i < count; i++){
+      engine2RandomTiebreak = (i > 0);
+      const result = engine2_smartSchedule(scheduleMode);
+      const rpt = result.failureReport;
+      versions.push({
+        index: i,
+        schedulesSnapshot: JSON.parse(JSON.stringify(schedules)),
+        placedCount: result.placedCandidates.length,
+        failedCount: result.failedTasks.length,
+        avgScore: rpt && rpt.engineMetrics ? rpt.engineMetrics.averageCandidateScore : null,
+        elapsedMs: result.elapsedMs,
+        failedList: (rpt && rpt.entries || []).map(e => e.className + '·' + e.subjectName),
+      });
+    }
+  } finally {
+    engine2RandomTiebreak = false;
+  }
+  return versions;
+}
+
+/* ── 多版本 UI 整合 ── */
+function runEngine2MultiVersion(){
+  const mode = typeof getScheduleMode === 'function' ? getScheduleMode() : 'full';
+  const VERSION_COUNT = 3;
+  setSaveStatus('🧬 產生 ' + VERSION_COUNT + ' 個排課版本中，請稍候...');
+  const progWrap = document.getElementById('smart-progress-wrap');
+  const prog     = document.getElementById('smart-progress');
+  if(progWrap) progWrap.style.display = 'block';
+  if(prog)     prog.textContent = '⏳ 產生 ' + VERSION_COUNT + ' 個排課版本中（每個版本都重新跑一次完整排課）...';
+
+  setTimeout(function(){
+    let versions;
+    try {
+      versions = engine2_generateScheduleVersions(VERSION_COUNT, mode);
+    } catch(e) {
+      setSaveStatus('❌ 產生版本錯誤：' + e.message, true);
+      if(progWrap) progWrap.style.display = 'none';
+      alert('產生版本錯誤：\n' + e.message);
+      return;
+    }
+    if(progWrap) progWrap.style.display = 'none';
+    setSaveStatus('✅ 已產生 ' + versions.length + ' 個版本，請選擇要套用哪一個');
+    window.lastEngine2Versions = versions;
+    renderEngine2VersionPicker(versions);
+  }, 80);
+}
+
+function renderEngine2VersionPicker(versions){
+  const body = document.getElementById('version-picker-body');
+  if(!body) return;
+  body.innerHTML = versions.map(function(v){
+    const statusLine = v.failedCount === 0
+      ? '<div style="color:#2f9e6e;font-size:13px;margin-top:4px;">✅ 全部排入</div>'
+      : '<div style="color:#c0554a;font-size:13px;margin-top:4px;">未排入（' + v.failedCount + '）：' + v.failedList.join('、') + '</div>';
+    return '<div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px;">'
+      + '<div style="font-weight:600;margin-bottom:6px;">版本 ' + (v.index + 1) + '</div>'
+      + '<div style="font-size:14px;">排入格數：' + v.placedCount
+        + '　未排入：' + v.failedCount
+        + '　平均分數：' + (v.avgScore !== null && v.avgScore !== undefined ? v.avgScore : 'N/A')
+        + '　耗時：' + v.elapsedMs + 'ms</div>'
+      + statusLine
+      + '<div class="modal-actions" style="margin-top:10px;"><button class="btn" onclick="applyEngine2Version(' + v.index + ')">套用這個版本</button></div>'
+      + '</div>';
+  }).join('');
+  document.getElementById('version-picker-modal').classList.add('show');
+}
+
+function applyEngine2Version(index){
+  const v = (window.lastEngine2Versions || [])[index];
+  if(!v){ alert('找不到這個版本，請重新產生。'); return; }
+  engine2_restoreSchedFromSnap(v.schedulesSnapshot);
+  closeEngine2VersionPicker();
+  onClassChange();
+  renderOverview();
+  setSaveStatus('✅ 已套用版本 ' + (index + 1));
+}
+
+function closeEngine2VersionPicker(){
+  document.getElementById('version-picker-modal').classList.remove('show');
+}
+
 
 
 
@@ -5432,6 +5685,8 @@ function tryPlaceDouble(classId, subjectName, teacherId, usedDaysForSubject){
   DAYS.forEach(d=>{
     if(usedDaysForSubject.has(d)) return;
     for(let p=1;p<=6;p++){
+      // Hard Constraint：第4、5節中間是午休，連堂不能橫跨（可以3-4節或5-6節，不能4-5節）
+      if(p === 4) continue;
       if(isBlockedByBand(c.grade, d, p) || isBlockedByBand(c.grade, d, p+1)) continue;
       const k1 = `${d}-${p}`, k2 = `${d}-${p+1}`;
       if(isOccupied(classId,k1) || isOccupied(classId,k2)) continue;
@@ -5912,59 +6167,15 @@ function runAutoScheduleForClass(classId){
 /* ============ 總覽 ============ */
 /* ============ 報表輸出 ============ */
 const ROOM_INSTANCES = [
-  ...NATURE_ROOMS.map(room=>({id:room, room, subject:'自然科學', label:room})),
+  // 自然教室依單/雙週各算一個獨立資源（跟 isRoomSlotFree 的邏輯一致，3間教室 = 6個資源）
+  ...NATURE_ROOMS.flatMap(room => ['單','雙'].map(parity => ({
+    id: room + '-' + parity, room, subject: '自然科學', parity, label: room + '（' + parity + '週）',
+  }))),
   {id:'美勞712教室', room:'美勞712教室', subject:'美勞', label:'美勞712教室（黃舒瑾老師）'},
   {id:'美勞631教室', room:'美勞631教室', subject:'美勞', label:'美勞631教室（林宜慧老師）'},
   {id:COMPUTER_ROOMS.mid, room:COMPUTER_ROOMS.mid, subject:'國際資訊交流', label:COMPUTER_ROOMS.mid+'（三、四年級）'},
   {id:COMPUTER_ROOMS.high, room:COMPUTER_ROOMS.high, subject:'國際資訊交流', label:COMPUTER_ROOMS.high+'（五、六年級）'},
 ];
-
-/** 從 motherTongueSchedule 收集所有有填寫的教室地點（去重、排序） */
-function getMtRoomLocations(){
-  const locs = new Set();
-  Object.values(motherTongueSchedule).forEach(v => {
-    const entries = Array.isArray(v) ? v : (v ? [v] : []);
-    entries.forEach(e => { if(e && e.location && e.location.trim()) locs.add(e.location.trim()); });
-  });
-  return [...locs].sort();
-}
-
-/** 產生本土語教室課表 HTML（從 motherTongueSchedule 讀取） */
-function buildMtRoomReportHTML(location){
-  let rows = '';
-  MT_PERIODS.forEach(period => {
-    rows += `<tr>
-      <td class="mt-time-col">${period.label}<span class="mt-time-sub">${period.time||''}</span></td>`;
-    DAYS.forEach(d => {
-      const key = `${d}-${period.key}`;
-      const entries = (motherTongueSchedule[key]||[]);
-      const arr = Array.isArray(entries) ? entries : [entries];
-      const match = arr.filter(e => e && e.location && e.location.trim() === location);
-      let cell = '';
-      if(match.length > 0){
-        cell = match.map(e =>
-          `<div class="mt-lang">${e.lang||''}</div>` +
-          `<div class="mt-grade">${e.group||''}</div>` +
-          `<div class="mt-teacher">${e.teacher||''}</div>`
-        ).join('<div style="border-top:1px dashed #ccc;margin:4px 0;"></div>');
-      }
-      rows += `<td>${cell}</td>`;
-    });
-    rows += '</tr>';
-  });
-  return `<div class="report-page">
-    <h3 style="font-family:'Noto Serif TC',serif;font-size:16px;text-align:center;margin:0 0 14px;letter-spacing:1px;">
-      苗栗縣頭份市后庄國民小學　第一學期　${location}　本土語文課程表
-    </h3>
-    <table class="mt-room-grid">
-      <tr>
-        <th style="width:13%;">時段</th>
-        ${DAYS.map(d=>`<th style="width:17.4%;">星期${d}</th>`).join('')}
-      </tr>
-      ${rows}
-    </table>
-  </div>`;
-}
 function refreshReportSelectors(){
   const type = document.getElementById('report-type').value;
   const sel = document.getElementById('report-target');
@@ -5976,15 +6187,7 @@ function refreshReportSelectors(){
     sel.innerHTML = '<option value="all">全部教師</option>' + teachers.map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('');
   } else if(type==='classroom'){
     sel.style.display='';
-    const mtLocs = getMtRoomLocations();
-    const mtOptions = mtLocs.length > 0
-      ? '<optgroup label="─ 本土語教室 ─">' +
-        mtLocs.map(loc=>`<option value="mt:${loc}">${loc}（本土語）</option>`).join('') +
-        '</optgroup>'
-      : '';
-    sel.innerHTML = '<option value="all">全部專科教室</option>' +
-      ROOM_INSTANCES.map(r=>`<option value="${r.id}">${r.label}</option>`).join('') +
-      mtOptions;
+    sel.innerHTML = '<option value="all">全部專科教室</option>' + ROOM_INSTANCES.map(r=>`<option value="${r.id}">${r.label}</option>`).join('');
   } else {
     // 一覽表類型本身就是彙整全校資料，不需要選單一對象
     sel.style.display='none';
@@ -6195,17 +6398,8 @@ function generateReportPreview(){
     targets.forEach(tid=>{ html += buildTeacherReportHTML(tid, blankSelfFill); });
   } else if(type==='classroom'){
     const target = document.getElementById('report-target').value;
-    const allMtLocs = getMtRoomLocations();
-    const targets = target==='all'
-      ? [...ROOM_INSTANCES.map(r=>r.id), ...allMtLocs.map(loc=>'mt:'+loc)]
-      : [target];
-    targets.forEach(rid=>{
-      if(rid.startsWith('mt:')){
-        html += buildMtRoomReportHTML(rid.slice(3));
-      } else {
-        html += buildClassroomReportHTML(rid);
-      }
-    });
+    const targets = target==='all' ? ROOM_INSTANCES.map(r=>r.id) : [target];
+    targets.forEach(rid=>{ html += buildClassroomReportHTML(rid); });
   } else if(type==='classAssign'){
     html = buildClassAssignReportHTML();
   } else if(type==='teacherAssign'){
