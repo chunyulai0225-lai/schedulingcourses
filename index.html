@@ -569,6 +569,7 @@
           <option value="subjectTeacher">各科任課教師表</option>
         </select>
         <select id="report-target"></select>
+        <input type="text" id="report-target-search" placeholder="🔍 搜尋姓名..." oninput="filterReportTargetOptions()" style="display:none;width:140px;">
         <label class="small-note" style="display:flex;align-items:center;gap:6px;">
           <input type="checkbox" id="report-blank-selffill" style="width:auto;">導師自填科目列印時留白
         </label>
@@ -6176,23 +6177,46 @@ const ROOM_INSTANCES = [
   {id:COMPUTER_ROOMS.mid, room:COMPUTER_ROOMS.mid, subject:'國際資訊交流', label:COMPUTER_ROOMS.mid+'（三、四年級）'},
   {id:COMPUTER_ROOMS.high, room:COMPUTER_ROOMS.high, subject:'國際資訊交流', label:COMPUTER_ROOMS.high+'（五、六年級）'},
 ];
+// 教師課表選單的分組順序：行政、導師、科任、鐘點老師一起排，同組內再依姓名排序（同姓氏會排在一起）
+const REPORT_TEACHER_ROLE_ORDER = ['行政','導師','科任','鐘點老師','教支人員'];
+function sortTeachersForReport(list){
+  return [...list].sort((a,b)=>{
+    const ra = REPORT_TEACHER_ROLE_ORDER.indexOf(a.role);
+    const rb = REPORT_TEACHER_ROLE_ORDER.indexOf(b.role);
+    const oa = ra===-1 ? REPORT_TEACHER_ROLE_ORDER.length : ra;
+    const ob = rb===-1 ? REPORT_TEACHER_ROLE_ORDER.length : rb;
+    if(oa!==ob) return oa-ob;
+    return a.name.localeCompare(b.name, 'zh-Hant');
+  });
+}
 function refreshReportSelectors(){
   const type = document.getElementById('report-type').value;
   const sel = document.getElementById('report-target');
+  const searchBox = document.getElementById('report-target-search');
+  searchBox.value = '';
   if(type==='class'){
-    sel.style.display='';
+    sel.style.display=''; searchBox.style.display='';
     sel.innerHTML = '<option value="all">全部班級</option>' + classes.map(c=>`<option value="${c.id}">${fullClassName(c)}</option>`).join('');
   } else if(type==='teacher'){
-    sel.style.display='';
-    sel.innerHTML = '<option value="all">全部教師</option>' + teachers.map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('');
+    sel.style.display=''; searchBox.style.display='';
+    sel.innerHTML = '<option value="all">全部教師</option>' + sortTeachersForReport(teachers).map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('');
   } else if(type==='classroom'){
-    sel.style.display='';
+    sel.style.display=''; searchBox.style.display='';
     sel.innerHTML = '<option value="all">全部專科教室</option>' + ROOM_INSTANCES.map(r=>`<option value="${r.id}">${r.label}</option>`).join('');
   } else {
     // 一覽表類型本身就是彙整全校資料，不需要選單一對象
-    sel.style.display='none';
+    sel.style.display='none'; searchBox.style.display='none';
     sel.innerHTML = '';
   }
+}
+// 依搜尋框內容，即時篩選 #report-target 下拉選單裡的選項（「全部...」那個選項永遠保留）
+function filterReportTargetOptions(){
+  const kw = document.getElementById('report-target-search').value.trim();
+  const sel = document.getElementById('report-target');
+  [...sel.options].forEach(opt=>{
+    if(opt.value==='all'){ opt.style.display=''; return; }
+    opt.style.display = (!kw || opt.textContent.includes(kw)) ? '' : 'none';
+  });
 }
 function cellDisplayForReport(classId, key, cell, blankSelfFill){
   const c = classes.find(x=>x.id===classId);
