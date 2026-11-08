@@ -3675,7 +3675,10 @@ function engine2_runSchedulingLoop(scheduleMode = 'full'){
 
         if(singleCands.length === 0){
           // 最後手段：放寬「同科目不同天」限制，再試一次
-          if(task.rule.spread !== 'onedouble' && task.rule.spread !== 'double+single'){
+          // Hard Constraint：everyday／everyday+1double（例如3-6年級國語）本來就是
+          // 「每天最多1節」的科目，不能因為這個最後手段就允許同一天出現兩節。
+          if(task.rule.spread !== 'onedouble' && task.rule.spread !== 'double+single' &&
+             task.rule.spread !== 'everyday' && task.rule.spread !== 'everyday+1double'){
             singleCands = engine2_buildSingleCandidates(task, new Set());
           }
           if(singleCands.length === 0){
@@ -5927,7 +5930,10 @@ function scheduleOneSubjectForClass(classId, rule){
       if(single){ sch[single.key]={subject:rule.name,teacherId,locked:null}; placedCount++; }
       else {
         // 最後手段：放寬不同天限制（非連堂科目允許同天出現第二次）
-        if(!rule.isPE && rule.spread!=='onedouble' && rule.spread!=='double+single'){
+        // Hard Constraint：everyday／everyday+1double（例如3-6年級國語）每天最多1節，
+        // 不能被這個最後手段放寬成同一天兩節。
+        if(!rule.isPE && rule.spread!=='onedouble' && rule.spread!=='double+single' &&
+           rule.spread!=='everyday' && rule.spread!=='everyday+1double'){
           const relaxed = tryPlaceSingle(classId,rule.name,teacherId,rule.isPE,rule.isMain,rule.prefer,rule.fallback,new Set());
           if(relaxed){ sch[relaxed.key]={subject:rule.name,teacherId,locked:null}; placedCount++; }
           else break;
