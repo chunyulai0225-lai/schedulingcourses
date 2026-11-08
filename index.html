@@ -569,6 +569,7 @@
           <option value="subjectTeacher">各科任課教師表</option>
         </select>
         <select id="report-target"></select>
+        <input type="text" id="report-target-search" placeholder="🔍 搜尋姓名..." oninput="filterReportTargetOptions()" style="display:none;width:140px;">
         <label class="small-note" style="display:flex;align-items:center;gap:6px;">
           <input type="checkbox" id="report-blank-selffill" style="width:auto;">導師自填科目列印時留白
         </label>
@@ -585,7 +586,7 @@
   <div class="modal">
     <h3 id="modal-title">編輯課程格</h3>
     <label>科目</label>
-    <select id="modal-subject"></select>
+    <select id="modal-subject" onchange="updateModalTeacherOptions()"></select>
     <label>授課教師</label>
     <select id="modal-teacher"></select>
     <label><input type="checkbox" id="modal-lock" style="width:auto;margin-right:6px">鎖定此格（自動排課不會更動）</label>
@@ -2148,7 +2149,17 @@ function renderSchedule(){
 function hasConflict(classId, key, teacherId){
   for(const [cid, sch] of Object.entries(schedules)){
     if(cid===classId) continue;
-    if(sch[key] && sch[key].teacherId===teacherId) return true;
+    const cell = sch[key];
+    if(!cell) continue;
+    if(cell.teacherId===teacherId) return true;
+    // 固定時段（社團活動／自由講堂／母語等）格子本身沒有記錄實際授課老師
+    // （見 applyFixedSlots，固定寫 teacherId:null），實際老師要另外查⑤配課的指定。
+    // 沒有這段的話，這位老師在社團/固定時段的忙碌狀態完全不會被排課引擎看見，
+    // 可能把他同時排進別班的正課，造成真正的衝堂。
+    if(cell.locked==='fixed'){
+      const fixedTeacherId = assignments[`${cid}|${cell.subject}`];
+      if(fixedTeacherId && fixedTeacherId===teacherId) return true;
+    }
   }
   return false;
 }
@@ -2185,6 +2196,56 @@ function clearClassSchedule(){
 
 /* ============ modal ============ */
 let modalCtx = null;
+
+// 這一班所有科目、任何一科有配課指定過的老師（去重）
+function assignedTeacherIdsForClass(classId){
+  const ids = new Set();
+  Object.entries(assignments).forEach(([k, tid]) => {
+    if(tid && k.startsWith(classId + '|')) ids.add(tid);
+  });
+  return ids;
+}
+
+// 產生「授課教師」下拉選單的 HTML：優先顯示「這個科目配課指定的老師」，
+// 其次是「這一班其他科目配課過的老師」，最後才是全校其他老師——
+// 三種都還是能選到，只是把最可能要選的人排到最前面、分組標示，減少手動排課時要找很久的問題。
+function buildModalTeacherOptionsHTML(classId, subjectName){
+  const specificId = subjectName ? (assignments[`${classId}|${subjectName}`] || null) : null;
+  const classIds = assignedTeacherIdsForClass(classId);
+  let html = '<option value="">（不指定 / 導師自填）</option>';
+
+  if(specificId){
+    const t = teachers.find(x=>x.id===specificId);
+    if(t) html += `<optgroup label="這個科目的配課老師"><option value="${t.id}">${t.name}（${t.role}）</option></optgroup>`;
+  }
+  const restClassTeachers = teachers.filter(t => classIds.has(t.id) && t.id !== specificId);
+  if(restClassTeachers.length){
+    html += '<optgroup label="本班配課老師">'
+      + restClassTeachers.map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('')
+      + '</optgroup>';
+  }
+  const otherTeachers = teachers.filter(t => !classIds.has(t.id) && t.id !== specificId);
+  html += '<optgroup label="全部教師">'
+    + otherTeachers.map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('')
+    + '</optgroup>';
+  return html;
+}
+
+// 科目下拉選單改變時，重新篩選/排序老師下拉選單
+function updateModalTeacherOptions(){
+  if(!modalCtx) return;
+  const subjSel = document.getElementById('modal-subject');
+  const tSel = document.getElementById('modal-teacher');
+  const prevValue = tSel.value;
+  tSel.innerHTML = buildModalTeacherOptionsHTML(modalCtx.classId, subjSel.value);
+  if([...tSel.options].some(o => o.value === prevValue)){
+    tSel.value = prevValue; // 原本選的老師還在名單裡，保留原選擇
+  } else {
+    const specificId = subjSel.value ? (assignments[`${modalCtx.classId}|${subjSel.value}`] || null) : null;
+    if(specificId) tSel.value = specificId; // 換科目後自動帶入這科目的配課老師
+  }
+}
+
 function openModal(classId, key, lockState){
   if(lockState==='fixed' || lockState==='pullout') return;
   modalCtx = {classId, key};
@@ -2193,11 +2254,11 @@ function openModal(classId, key, lockState){
   const subjSel = document.getElementById('modal-subject');
   const editableSubjects = subjects.filter(s=>!s.locked && (s.band===band || s.band==='all'));
   subjSel.innerHTML = '<option value="">— 選擇科目 —</option>' + editableSubjects.map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
-  const tSel = document.getElementById('modal-teacher');
-  tSel.innerHTML = '<option value="">（不指定 / 導師自填）</option>' + teachers.map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('');
-
   const existing = schedules[classId][key];
-  if(existing){ subjSel.value = existing.subject; tSel.value = existing.teacherId||''; }
+  if(existing){ subjSel.value = existing.subject; }
+  const tSel = document.getElementById('modal-teacher');
+  tSel.innerHTML = buildModalTeacherOptionsHTML(classId, subjSel.value);
+  if(existing){ tSel.value = existing.teacherId||''; }
   document.getElementById('modal-lock').checked = lockState==='manual';
 
   const [day, period] = key.split('-');
@@ -2231,11 +2292,15 @@ const NATURE_ROOMS = ['自然632教室','自然711教室','自然813教室'];
 const COMPUTER_ROOMS = {mid:'電腦333教室', high:'電腦845教室'};
 const ROOM_SUBJECTS = ['自然科學','美勞','國際資訊交流'];
 
-// 依老師姓名決定使用哪間自然教室（兩位老師共用一間）
+// 依老師姓名決定使用哪間自然教室、以及固定使用單週或雙週
+// （每間教室固定由兩位老師輪流：一位只上單週、一位只上雙週，是老師之間協調好的實際安排，不能動態調整）
 const NATURE_TEACHER_ROOM = {
-  '詹庭瑜':'自然711教室', '李喬羚':'自然711教室',
-  '林雅惠':'自然813教室', '葉敏':'自然813教室',
-  '林盈汝':'自然632教室', '林怡潔':'自然632教室',
+  '詹庭瑜': {room:'自然711教室', parity:'單'},
+  '李喬羚': {room:'自然711教室', parity:'雙'},
+  '林雅惠': {room:'自然813教室', parity:'單'},
+  '葉敏':   {room:'自然813教室', parity:'雙'},
+  '林盈汝': {room:'自然632教室', parity:'單'},
+  '林怡潔': {room:'自然632教室', parity:'雙'},
 };
 // 美勞教室：只有特定老師需要，其他在班上上課不佔教室
 const ART_TEACHER_ROOM = {
@@ -2273,8 +2338,12 @@ function ensureRoomAssignment(classId, subjectName, teacherId){
   const tName = getTeacherName(teacherId);
 
   if(subjectName==='自然科學'){
-    // 依老師決定教室，然後在房間內以單/雙週均衡分配（恢復6個有效資源）
-    const room = NATURE_TEACHER_ROOM[tName] || (() => {
+    // 已知老師：教室＋單雙週是固定的（見 NATURE_TEACHER_ROOM），不可動態調整。
+    // 未知老師（不在名單內）：退回動態負載平衡，挑目前用最少人的教室+單雙週組合。
+    const fixed = NATURE_TEACHER_ROOM[tName];
+    if(fixed){
+      assignment = {room: fixed.room, parity: fixed.parity};
+    } else {
       const combos = [];
       NATURE_ROOMS.forEach(r=>{ ['單','雙'].forEach(p=>combos.push({room:r,parity:p})); });
       combos.sort((a,b)=>{
@@ -2282,11 +2351,8 @@ function ensureRoomAssignment(classId, subjectName, teacherId){
         const cb=Object.values(classRoomAssignment).filter(x=>x['自然科學']&&x['自然科學'].room===b.room&&x['自然科學'].parity===b.parity).length;
         return ca-cb;
       });
-      return combos[0].room;
-    })();
-    const singleCount = Object.values(classRoomAssignment).filter(m=>m['自然科學']&&m['自然科學'].room===room&&m['自然科學'].parity==='單').length;
-    const doubleCount = Object.values(classRoomAssignment).filter(m=>m['自然科學']&&m['自然科學'].room===room&&m['自然科學'].parity==='雙').length;
-    assignment = {room, parity: singleCount<=doubleCount?'單':'雙'};
+      assignment = combos[0];
+    }
   } else if(subjectName==='美勞'){
     const room = ART_TEACHER_ROOM[tName];
     if(room) assignment = {room};
@@ -2500,6 +2566,8 @@ function engine2_buildDoubleCandidates(task, usedDays = new Set()){
     if(usedDays.has(d)) return;
 
     for(let p = 1; p <= 6; p++){   // p+1 最多到 7
+      // Hard Constraint：第4、5節中間是午休，連堂不能橫跨（可以3-4節或5-6節，不能4-5節）
+      if(p === 4) continue;
       // Hard Constraint：年段時段封鎖（兩節都要檢查）
       if(isBlockedByBand(c.grade, d, p))   continue;
       if(isBlockedByBand(c.grade, d, p+1)) continue;
@@ -3607,7 +3675,10 @@ function engine2_runSchedulingLoop(scheduleMode = 'full'){
 
         if(singleCands.length === 0){
           // 最後手段：放寬「同科目不同天」限制，再試一次
-          if(task.rule.spread !== 'onedouble' && task.rule.spread !== 'double+single'){
+          // Hard Constraint：everyday／everyday+1double（例如3-6年級國語）本來就是
+          // 「每天最多1節」的科目，不能因為這個最後手段就允許同一天出現兩節。
+          if(task.rule.spread !== 'onedouble' && task.rule.spread !== 'double+single' &&
+             task.rule.spread !== 'everyday' && task.rule.spread !== 'everyday+1double'){
             singleCands = engine2_buildSingleCandidates(task, new Set());
           }
           if(singleCands.length === 0){
@@ -5618,6 +5689,8 @@ function tryPlaceDouble(classId, subjectName, teacherId, usedDaysForSubject){
   DAYS.forEach(d=>{
     if(usedDaysForSubject.has(d)) return;
     for(let p=1;p<=6;p++){
+      // Hard Constraint：第4、5節中間是午休，連堂不能橫跨（可以3-4節或5-6節，不能4-5節）
+      if(p === 4) continue;
       if(isBlockedByBand(c.grade, d, p) || isBlockedByBand(c.grade, d, p+1)) continue;
       const k1 = `${d}-${p}`, k2 = `${d}-${p+1}`;
       if(isOccupied(classId,k1) || isOccupied(classId,k2)) continue;
@@ -5857,7 +5930,10 @@ function scheduleOneSubjectForClass(classId, rule){
       if(single){ sch[single.key]={subject:rule.name,teacherId,locked:null}; placedCount++; }
       else {
         // 最後手段：放寬不同天限制（非連堂科目允許同天出現第二次）
-        if(!rule.isPE && rule.spread!=='onedouble' && rule.spread!=='double+single'){
+        // Hard Constraint：everyday／everyday+1double（例如3-6年級國語）每天最多1節，
+        // 不能被這個最後手段放寬成同一天兩節。
+        if(!rule.isPE && rule.spread!=='onedouble' && rule.spread!=='double+single' &&
+           rule.spread!=='everyday' && rule.spread!=='everyday+1double'){
           const relaxed = tryPlaceSingle(classId,rule.name,teacherId,rule.isPE,rule.isMain,rule.prefer,rule.fallback,new Set());
           if(relaxed){ sch[relaxed.key]={subject:rule.name,teacherId,locked:null}; placedCount++; }
           else break;
@@ -6098,29 +6174,55 @@ function runAutoScheduleForClass(classId){
 /* ============ 總覽 ============ */
 /* ============ 報表輸出 ============ */
 const ROOM_INSTANCES = [
-  ...NATURE_ROOMS.map(room=>({id:room, room, subject:'自然科學', label:room})),
+  // 自然教室依單/雙週各算一個獨立資源（跟 isRoomSlotFree 的邏輯一致，3間教室 = 6個資源）
+  ...NATURE_ROOMS.flatMap(room => ['單','雙'].map(parity => ({
+    id: room + '-' + parity, room, subject: '自然科學', parity, label: room + '（' + parity + '週）',
+  }))),
   {id:'美勞712教室', room:'美勞712教室', subject:'美勞', label:'美勞712教室（黃舒瑾老師）'},
   {id:'美勞631教室', room:'美勞631教室', subject:'美勞', label:'美勞631教室（林宜慧老師）'},
   {id:COMPUTER_ROOMS.mid, room:COMPUTER_ROOMS.mid, subject:'國際資訊交流', label:COMPUTER_ROOMS.mid+'（三、四年級）'},
   {id:COMPUTER_ROOMS.high, room:COMPUTER_ROOMS.high, subject:'國際資訊交流', label:COMPUTER_ROOMS.high+'（五、六年級）'},
 ];
+// 教師課表選單的分組順序：行政、導師、科任、鐘點老師一起排，同組內再依姓名排序（同姓氏會排在一起）
+const REPORT_TEACHER_ROLE_ORDER = ['行政','導師','科任','鐘點老師','教支人員'];
+function sortTeachersForReport(list){
+  return [...list].sort((a,b)=>{
+    const ra = REPORT_TEACHER_ROLE_ORDER.indexOf(a.role);
+    const rb = REPORT_TEACHER_ROLE_ORDER.indexOf(b.role);
+    const oa = ra===-1 ? REPORT_TEACHER_ROLE_ORDER.length : ra;
+    const ob = rb===-1 ? REPORT_TEACHER_ROLE_ORDER.length : rb;
+    if(oa!==ob) return oa-ob;
+    return a.name.localeCompare(b.name, 'zh-Hant');
+  });
+}
 function refreshReportSelectors(){
   const type = document.getElementById('report-type').value;
   const sel = document.getElementById('report-target');
+  const searchBox = document.getElementById('report-target-search');
+  searchBox.value = '';
   if(type==='class'){
-    sel.style.display='';
+    sel.style.display=''; searchBox.style.display='';
     sel.innerHTML = '<option value="all">全部班級</option>' + classes.map(c=>`<option value="${c.id}">${fullClassName(c)}</option>`).join('');
   } else if(type==='teacher'){
-    sel.style.display='';
-    sel.innerHTML = '<option value="all">全部教師</option>' + teachers.map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('');
+    sel.style.display=''; searchBox.style.display='';
+    sel.innerHTML = '<option value="all">全部教師</option>' + sortTeachersForReport(teachers).map(t=>`<option value="${t.id}">${t.name}（${t.role}）</option>`).join('');
   } else if(type==='classroom'){
-    sel.style.display='';
+    sel.style.display=''; searchBox.style.display='';
     sel.innerHTML = '<option value="all">全部專科教室</option>' + ROOM_INSTANCES.map(r=>`<option value="${r.id}">${r.label}</option>`).join('');
   } else {
     // 一覽表類型本身就是彙整全校資料，不需要選單一對象
-    sel.style.display='none';
+    sel.style.display='none'; searchBox.style.display='none';
     sel.innerHTML = '';
   }
+}
+// 依搜尋框內容，即時篩選 #report-target 下拉選單裡的選項（「全部...」那個選項永遠保留）
+function filterReportTargetOptions(){
+  const kw = document.getElementById('report-target-search').value.trim();
+  const sel = document.getElementById('report-target');
+  [...sel.options].forEach(opt=>{
+    if(opt.value==='all'){ opt.style.display=''; return; }
+    opt.style.display = (!kw || opt.textContent.includes(kw)) ? '' : 'none';
+  });
 }
 function cellDisplayForReport(classId, key, cell, blankSelfFill){
   const c = classes.find(x=>x.id===classId);
