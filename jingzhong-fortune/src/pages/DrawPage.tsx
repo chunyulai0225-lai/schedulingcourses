@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { SITE_NAME } from '../config/site';
+import { REQUIRED_SHENG, SITE_NAME } from '../config/site';
 import { drawFortune, type DrawResult } from '../lib/drawFortune';
 import { toChineseNumber } from '../lib/chineseNumber';
 import { FortuneTube } from '../components/draw/FortuneTube';
@@ -81,8 +81,11 @@ export function DrawPage() {
             <h1 className="pl-[0.3em] text-4xl font-bold tracking-[0.3em] text-paper sm:text-5xl">
               第{toChineseNumber(phase.draw.number)}籤
             </h1>
+            <a href="#divination" className="-mt-6 border-b border-gold/40 pb-0.5 text-gold-soft hover:text-paper">
+              請擲筊確認：需連續{REQUIRED_SHENG}個聖筊
+            </a>
             <FortuneImage number={phase.draw.number} imageUrl={phase.draw.imageUrl} />
-            <DivinationPanel />
+            <DivinationPanel onRedraw={start} />
             <div className="flex w-full max-w-xl flex-col gap-4 sm:flex-row sm:justify-center">
               <button
                 type="button"
