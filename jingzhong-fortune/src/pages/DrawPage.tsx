@@ -5,6 +5,7 @@ import { drawFortune, type DrawResult } from '../lib/drawFortune';
 import { toChineseNumber } from '../lib/chineseNumber';
 import { FortuneTube } from '../components/draw/FortuneTube';
 import { FortuneImage } from '../components/draw/FortuneImage';
+import { DrawnStick } from '../components/draw/DrawnStick';
 import { DivinationPanel } from '../components/draw/DivinationPanel';
 import { SiteFooter } from '../components/layout/SiteFooter';
 
@@ -15,11 +16,12 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 type Phase =
   | { kind: 'shaking' }
   | { kind: 'rising' }
-  | { kind: 'result'; draw: DrawResult; drawId: number }
+  | { kind: 'result'; draw: DrawResult; drawId: number; confirmed: boolean }
   | { kind: 'error' };
 
 /**
- * 抽籤流程：進入頁面即開始搖籤 → 抽出 → 顯示籤詩圖片 → 可模擬擲筊。
+ * 抽籤流程：進入頁面即開始搖籤 → 搖出一支籤（顯示籤號）→ 擲筊請示，
+ * 連得三個聖筊後才顯示籤詩圖片；未獲確認則重新抽籤。
  * 同一時間只會有一個抽籤請求，避免連點造成重複計數。
  */
 export function DrawPage() {
@@ -40,12 +42,19 @@ export function DrawPage() {
       await wait(RISE_MS);
       if (!alive.current) return;
       drawCount.current += 1;
-      setPhase({ kind: 'result', draw, drawId: drawCount.current });
+      // 先在背景載入籤詩圖片，確認後即可立即顯示
+      if (draw.imageUrl) new Image().src = draw.imageUrl;
+      setPhase({ kind: 'result', draw, drawId: drawCount.current, confirmed: false });
     } catch {
       if (alive.current) setPhase({ kind: 'error' });
     } finally {
       busy.current = false;
     }
+  }, []);
+
+  const confirm = useCallback(() => {
+    setPhase((p) => (p.kind === 'result' ? { ...p, confirmed: true } : p));
+    window.scrollTo({ top: 0 });
   }, []);
 
   useEffect(() => {
@@ -76,16 +85,23 @@ export function DrawPage() {
           </div>
         )}
 
-        {phase.kind === 'result' && (
-          <div key={phase.drawId} className="fade-up mt-6 flex w-full flex-col items-center gap-10">
+        {phase.kind === 'result' && !phase.confirmed && (
+          <div key={phase.drawId} className="fade-up mt-8 flex w-full flex-col items-center gap-8">
+            <DrawnStick number={phase.draw.number} />
+            <DivinationPanel onRedraw={start} onConfirmed={confirm} />
+            <Link to="/" className="border-b border-gold/40 pb-1 tracking-widest text-gold-soft hover:text-paper">返回首頁</Link>
+          </div>
+        )}
+
+        {phase.kind === 'result' && phase.confirmed && (
+          <div key={`c${phase.drawId}`} className="fade-up mt-6 flex w-full flex-col items-center gap-8">
             <h1 className="pl-[0.3em] text-4xl font-bold tracking-[0.3em] text-paper sm:text-5xl">
               第{toChineseNumber(phase.draw.number)}籤
             </h1>
-            <a href="#divination" className="-mt-6 border-b border-gold/40 pb-0.5 text-gold-soft hover:text-paper">
-              請擲筊確認：需連續{REQUIRED_SHENG}個聖筊
-            </a>
+            <p className="-mt-4 border-y border-gold/40 px-6 py-2 text-center tracking-[0.15em] text-gold-soft">
+              已連得{REQUIRED_SHENG}個聖筊，此籤確認
+            </p>
             <FortuneImage number={phase.draw.number} imageUrl={phase.draw.imageUrl} />
-            <DivinationPanel onRedraw={start} />
             <div className="flex w-full max-w-xl flex-col gap-4 sm:flex-row sm:justify-center">
               <button
                 type="button"

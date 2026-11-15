@@ -14,9 +14,12 @@ type Status = 'pending' | 'confirmed' | 'rejected';
 /**
  * 模擬擲筊確認：需連續 REQUIRED_SHENG 個聖筊才確認此籤；
  * 中途出現笑筊或陰筊即未獲確認，停止擲筊並請使用者重新抽籤。
+ * 確認後（稍候讓使用者看見第三個聖筊）呼叫 onConfirmed，才顯示籤詩。
  * 完全在瀏覽器內進行：不會改變籤號、不呼叫後端、不增加抽籤次數。
  */
-export function DivinationPanel({ onRedraw }: { onRedraw: () => void }) {
+const CONFIRM_DELAY_MS = 1400;
+
+export function DivinationPanel({ onRedraw, onConfirmed }: { onRedraw: () => void; onConfirmed: () => void }) {
   const [cups, setCups] = useState<[CupFace, CupFace]>(['flat', 'round']);
   const [history, setHistory] = useState<DivinationResult[]>([]);
   const [tossing, setTossing] = useState(false);
@@ -26,6 +29,12 @@ export function DivinationPanel({ onRedraw }: { onRedraw: () => void }) {
 
   const last = history[history.length - 1];
   const status: Status = last && last !== 'sheng' ? 'rejected' : history.length >= REQUIRED_SHENG ? 'confirmed' : 'pending';
+
+  useEffect(() => {
+    if (status !== 'confirmed' || tossing) return;
+    const t = window.setTimeout(onConfirmed, CONFIRM_DELAY_MS);
+    return () => window.clearTimeout(t);
+  }, [status, tossing, onConfirmed]);
 
   const toss = () => {
     if (tossing || status !== 'pending') return;
@@ -39,9 +48,9 @@ export function DivinationPanel({ onRedraw }: { onRedraw: () => void }) {
   };
 
   return (
-    <section id="divination" aria-labelledby="divination-heading" className="w-full max-w-xl scroll-mt-6 border-y border-gold/30 py-8 text-center">
-      <h2 id="divination-heading" className="pl-[0.3em] text-2xl font-semibold tracking-[0.3em] text-gold-soft">擲筊確認</h2>
-      <p className="mt-2 text-paper/90">需連續擲得 {REQUIRED_SHENG} 個聖筊，方確認為神明所賜之籤。</p>
+    <section aria-labelledby="divination-heading" className="w-full max-w-xl border-t border-gold/30 pt-8 text-center">
+      <h2 id="divination-heading" className="pl-[0.3em] text-2xl font-semibold tracking-[0.3em] text-gold-soft">擲筊請示</h2>
+      <p className="mt-2 text-paper/90">請擲筊請示神明是否賜此籤。<br />需連續擲得 {REQUIRED_SHENG} 個聖筊，方可領取籤詩。</p>
       <p className="mt-1 text-sm text-paper-dim">此為線上模擬擲筊，結果僅供參考；擲筊不會改變籤號。</p>
 
       {/* 進度：每一筊的結果 */}
@@ -92,10 +101,7 @@ export function DivinationPanel({ onRedraw }: { onRedraw: () => void }) {
       )}
 
       {status === 'confirmed' && !tossing && (
-        <div className="fade-up mt-4 border border-gold/60 bg-gold/10 px-4 py-5">
-          <p className="text-2xl font-bold tracking-[0.2em] text-gold-soft">連得{REQUIRED_SHENG}個聖筊</p>
-          <p className="mt-2 text-lg text-paper">此籤確認，請依籤詩所示，誠心參悟。</p>
-        </div>
+        <p className="fade-up mt-4 text-xl tracking-[0.2em] text-gold-soft">連得{REQUIRED_SHENG}個聖筊，恭請籤詩…</p>
       )}
 
       {status === 'rejected' && !tossing && (
