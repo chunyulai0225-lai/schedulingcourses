@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
+
+  --color-ink-950: #0b1526;   /* 墨藍：最深底色 */
+  --color-ink-900: #0f1b30;
+  --color-ink-800: #17284a;   /* 深靛藍 */
+  --color-ink-700: #223861;
+  --color-paper: #f4ecdc;     /* 米白 */
+  --color-paper-dim: #d9cfbc;
+  --color-gold: #c9a24f;      /* 稻穗金 */
+  --color-gold-soft: #e2c789;
+  --color-vermilion: #a3342c; /* 朱紅，少量使用 */
+}
+
+@layer base {
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    font-family: var(--font-serif);
+    color: var(--color-paper);
+    background-color: var(--color-ink-950);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible { outline: 2px solid var(--color-gold-soft); outline-offset: 3px; }
+}
