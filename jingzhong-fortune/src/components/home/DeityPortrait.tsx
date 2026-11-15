@@ -1,23 +1,24 @@
 import { useEffect, useState } from 'react';
 
 interface DeityPortraitProps {
-  photoUrl: string;
+  /** null 表示尚未上傳。 */
+  photoUrl: string | null;
   deityName: string;
-  /** 設定是否已讀取完成；未完成前不顯示「待提供」以免閃爍。 */
-  settingsLoaded: boolean;
+  /** 是否已查詢完成；未完成前不顯示「待提供」以免閃爍。 */
+  loaded: boolean;
 }
 
 /**
  * 主神照片。照片以原始比例完整呈現（object-contain），
  * 不裁切、不加濾鏡；尚未提供或讀取失敗時只顯示文字提示，不以任何圖像替代神像。
  */
-export function DeityPortrait({ photoUrl, deityName, settingsLoaded }: DeityPortraitProps) {
+export function DeityPortrait({ photoUrl, deityName, loaded }: DeityPortraitProps) {
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing'>('loading');
 
   useEffect(() => {
-    if (!settingsLoaded) return;
+    if (!loaded) return;
     setStatus(photoUrl ? 'loading' : 'missing');
-  }, [photoUrl, settingsLoaded]);
+  }, [photoUrl, loaded]);
 
   const alt = deityName ? `${deityName}正式照片` : '旌忠廟主神正式照片';
 
