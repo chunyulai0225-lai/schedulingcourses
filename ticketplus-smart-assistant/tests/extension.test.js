@@ -419,6 +419,11 @@ async function run() {
   // ════════════════════════════════════════════════════
   section('第八階段：驗證碼與排隊偵測');
   await test('出現驗證碼 → 立即暫停輔助、顯示提示並通知', async () => {
+    // 先把另一個分頁切到最前面，模擬使用者正在看別的頁面
+    const other = await ctx.newPage();
+    await other.goto(`${base}/no-meta.html`);
+    await other.bringToFront();
+    page.__other = other;
     await page.goto(`${base}/captcha.html`);
     await waitFor(async () => (await monitor()).attention === 'captcha');
     await waitFor(() => hasLog((l) => l.category === 'captcha' && l.level === 'notify'));
@@ -428,14 +433,53 @@ async function run() {
     eq(await page.inputValue('input[name=captchaCode]'), '', '不得填寫驗證碼');
     await page.screenshot({ path: path.join(SHOTS, 'captcha-hold.png') });
   });
+  await test('快速輸入：活動分頁自動切到最前面', async () => {
+    const tabId = await tabIdOf(page);
+    await waitFor(() => S(async (id) => (await chrome.tabs.get(id)).active, tabId), { msg: '活動分頁應被切到最前面' });
+    await waitFor(() => hasLog((l) => l.message === '已將活動頁面切換到最前面'));
+    await page.__other.close();
+  });
+  await test('快速輸入：游標自動放進驗證碼輸入框，但內容保持空白', async () => {
+    await waitFor(() => page.evaluate(() => document.activeElement && document.activeElement.name === 'captchaCode'), { msg: '游標應在驗證碼輸入框' });
+    eq(await page.inputValue('input[name=captchaCode]'), '', '外掛不得輸入任何內容');
+    assert((await panelText(page)).includes('游標已放在驗證碼輸入框'));
+  });
+  await test('快速輸入：提示音重複響，使用者開始打字後停止', async () => {
+    const before = await S(() => self.__tp.alertRepeats());
+    await page.waitForTimeout(9000);
+    const during = await S(() => self.__tp.alertRepeats());
+    assert(during - before >= 2, `9 秒內應重複至少 2 次（實際 ${during - before}）`);
+    await page.keyboard.type('7K3P'); // 模擬使用者親自輸入
+    eq(await page.inputValue('input[name=captchaCode]'), '7K3P', '使用者的輸入直接進入驗證碼欄位');
+    const afterTyping = await S(() => self.__tp.alertRepeats());
+    await page.waitForTimeout(6000);
+    eq(await S(() => self.__tp.alertRepeats()), afterTyping, '開始打字後不應再響');
+  });
+  await test('快速輸入：使用者已在其他欄位打字時不搶游標', async () => {
+    await page.goto(`${base}/order.html`);
+    await waitFor(async () => (await monitor()).pageType === 'order');
+    await page.click('#f-name');
+    await page.keyboard.type('王');
+    await page.evaluate(() => {
+      const box = document.createElement('div');
+      box.className = 'captcha-box';
+      box.innerHTML = '<p>請輸入驗證碼</p><img class="captcha-img" alt="" width="120" height="40" src="data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 width=%27120%27 height=%2740%27/>"><input name="captchaCode" type="text">';
+      document.querySelector('main').prepend(box);
+    });
+    await waitFor(async () => (await monitor()).attention === 'captcha');
+    await page.waitForTimeout(1000);
+    eq(await page.evaluate(() => document.activeElement.id), 'f-name', '不應把游標從使用者正在輸入的欄位搶走');
+  });
   await test('使用者完成驗證（驗證元件消失）→ 輔助恢復但仍需逐一確認', async () => {
     await page.evaluate(() => document.querySelector('.captcha-box').remove());
     await waitFor(async () => (await monitor()).pageType === 'order');
     assert((await panelText(page)).includes('安全檢查頁面已結束'));
   });
-  await test('簡訊驗證 → verification', async () => {
+  await test('簡訊驗證 → verification，游標自動放進驗證碼欄位', async () => {
     await page.goto(`${base}/sms.html`);
     await waitFor(async () => (await monitor()).attention === 'verification');
+    await waitFor(() => page.evaluate(() => document.activeElement && document.activeElement.tagName === 'INPUT'), { msg: '游標應在簡訊驗證碼欄位' });
+    eq(await page.inputValue('input'), '');
   });
   await test('排隊頁面 → 通知並提醒不要重新整理', async () => {
     await page.goto(`${base}/queue.html`);

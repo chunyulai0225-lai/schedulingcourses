@@ -408,6 +408,28 @@
     return result;
   }
 
+  // ── 驗證碼／簡訊驗證輸入框的「位置」 ───────────────────────
+  // 只用來捲動畫面並把游標放進輸入框，讓使用者可以直接打字。
+  // 不會讀取驗證碼圖片、不會填入任何內容。
+  const CODE_FIELD_RE = /(captcha|驗證碼|驗證|認證碼|verify|verification|otp|one-time-code|\bcode\b)/i;
+  const CAPTCHA_ANCHORS = 'iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"], .g-recaptcha, .h-captcha, .cf-turnstile, [class*="captcha" i], [id*="captcha" i], img[src*="captcha" i]';
+
+  function findVerificationTarget(doc) {
+    const inputs = Array.from(doc.querySelectorAll('input')).filter((i) => {
+      const t = (i.type || 'text').toLowerCase();
+      return ['text', 'tel', 'number', ''].includes(t) && isVisible(i) && !i.disabled && !i.readOnly;
+    });
+    const meta = (i) => `${labelFor(i)} ${i.name || ''} ${i.id || ''} ${i.placeholder || ''} ${i.autocomplete || ''}`;
+    let input = inputs.find((i) => CODE_FIELD_RE.test(meta(i)) && !/(姓名|手機|電話|e-?mail|信箱)/i.test(meta(i))) || null;
+    if (!input) {
+      // 頁面上只有一個空白輸入框時，視為驗證碼輸入框
+      const empty = inputs.filter((i) => !i.value);
+      if (empty.length === 1) input = empty[0];
+    }
+    const widget = Array.from(doc.querySelectorAll(CAPTCHA_ANCHORS)).find(isVisible) || null;
+    return { input, anchor: widget || input };
+  }
+
   // ── 訂單資訊（結帳頁） ─────────────────────────────────
   function extractOrderInfo(doc) {
     const lines = textOf(doc.body).split(/\n+/).map((l) => l.trim()).filter(Boolean);
@@ -666,6 +688,7 @@
     matchTickets,
     findQtyControls,
     extractFormFields,
+    findVerificationTarget,
     isVisible,
     norm,
     SENSITIVE_FIELD_RE

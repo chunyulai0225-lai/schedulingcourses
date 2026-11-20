@@ -25,6 +25,9 @@
   const HOLD_TYPES = [PT.CAPTCHA, PT.VERIFICATION, PT.QUEUE, PT.LOGIN];
   const STOP_TYPES = [PT.CHECKOUT, PT.ERROR, PT.TIMEOUT, PT.UNKNOWN, PT.UNSUPPORTED];
   const UNKNOWN_GRACE_MS = 15000; // 頁面載入後給 15 秒等待內容出現，才判定「無法辨識」
+  const CODE_TYPES = [PT.CAPTCHA, PT.VERIFICATION]; // 需要使用者輸入驗證碼的頁面
+  const ALERT_REPEAT_MS = 4000; // 驗證碼提示音重複間隔
+  const ALERT_REPEAT_MAX = 15; // 最多重複約 1 分鐘
 
   const state = {
     monitor: null,
@@ -37,6 +40,12 @@
     pendingSince: Date.now(),
     lastUserActivity: 0,
     hadHold: false,
+    holdType: null,
+    holdStartedAt: 0,
+    focusDone: false,
+    focusMessage: '',
+    alertTimer: null,
+    alertCount: 0,
     collapsed: false,
     highlighted: new Set(),
     confirmAction: null,
@@ -108,6 +117,9 @@
     } else {
       applyHighlights(ev);
     }
+    if (hold && pageType !== state.holdType) startHold(pageType);
+    if (hold && CODE_TYPES.includes(pageType) && !state.focusDone) focusVerificationInput();
+    if (!hold && state.holdType) endHold();
     if (state.hadHold && !hold) {
       state.flash = '安全檢查頁面已結束。輔助功能可再次使用，但每個動作仍需您親自按下確認。';
       contentLog('info', '安全檢查頁面已結束', `目前頁面：${L.pageType[pageType]}`);
@@ -116,6 +128,64 @@
 
     report(analysis, ev);
     renderPanel();
+  }
+
+  // ── 驗證碼快速輸入輔助（不讀取、不填寫驗證碼，只節省您找輸入框的時間） ──
+  function startHold(type) {
+    stopAlertRepeat();
+    state.holdType = type;
+    state.holdStartedAt = Date.now();
+    state.focusDone = false;
+    state.focusMessage = '';
+    if (CODE_TYPES.includes(type) && isActive()) {
+      state.alertCount = 0;
+      state.alertTimer = setInterval(repeatAlert, ALERT_REPEAT_MS);
+    }
+  }
+
+  function endHold() {
+    stopAlertRepeat();
+    state.holdType = null;
+    state.focusDone = false;
+    state.focusMessage = '';
+  }
+
+  function stopAlertRepeat() {
+    if (state.alertTimer) clearInterval(state.alertTimer);
+    state.alertTimer = null;
+  }
+
+  function userEngagedSinceHold() {
+    return state.lastUserActivity > state.holdStartedAt;
+  }
+
+  // 提示音重複響，直到您開始操作頁面、驗證結束、監控暫停，或響滿約 1 分鐘
+  function repeatAlert() {
+    const t = state.analysis && state.analysis.pageType;
+    if (!isActive() || !CODE_TYPES.includes(t) || userEngagedSinceHold() || state.alertCount >= ALERT_REPEAT_MAX) {
+      stopAlertRepeat();
+      return;
+    }
+    state.alertCount++;
+    send({ type: 'alertRepeat', pageType: t });
+  }
+
+  // 捲動到驗證碼位置並把游標放進輸入框；您已經在其他欄位打字時不搶游標
+  function focusVerificationInput() {
+    if (!isActive() || userEngagedSinceHold()) return;
+    const target = A.findVerificationTarget(document);
+    if (!target.anchor) return; // 頁面可能還在載入，下次評估再試
+    target.anchor.scrollIntoView({ block: 'center' });
+    const ae = document.activeElement;
+    const typingElsewhere = ae && ae !== document.body && ae !== target.input && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && ae.value;
+    if (target.input && !typingElsewhere) {
+      target.input.focus({ preventScroll: true });
+      state.focusMessage = '👉 游標已放在驗證碼輸入框，請直接輸入。';
+    } else {
+      state.focusMessage = '👉 已捲動到驗證位置，請直接完成驗證。';
+    }
+    state.focusDone = true;
+    contentLog('info', '已定位驗證碼輸入位置', target.input ? '游標已放入輸入框（內容由使用者輸入）' : '找不到輸入框，只捲動到驗證位置');
   }
 
   function buildEvaluation(analysis) {
@@ -467,7 +537,7 @@
         queue: '您正在官方排隊流程中。請保持此頁面開啟、不要重新整理，外掛不會刷新頁面或改變排隊順序。',
         login: '頁面要求登入。請您親自輸入帳號密碼，外掛不會儲存或填寫密碼。'
       }[a.pageType];
-      html += `<div class="alert a-bad"><b>⛔ 已暫停自動輔助</b>\n${esc(msg)}</div>`;
+      html += `<div class="alert a-bad"><b>⛔ 已暫停自動輔助</b>\n${esc(msg)}${state.focusMessage ? `\n<b>${esc(state.focusMessage)}</b>` : ''}</div>`;
     }
 
     // 人工確認（結帳頁）
@@ -583,6 +653,7 @@
     window.addEventListener(ev, (e) => {
       if (host && e.composedPath && e.composedPath().includes(host)) return;
       state.lastUserActivity = Date.now();
+      if (state.alertTimer) stopAlertRepeat(); // 您開始操作就停止提示音
     }, true)
   );
   window.addEventListener('online', scheduleEvaluate);
@@ -613,6 +684,7 @@
       state.confirmAction = null;
       state.flash = '';
     }
+    if (!isActive()) stopAlertRepeat();
     evaluate();
   }
 

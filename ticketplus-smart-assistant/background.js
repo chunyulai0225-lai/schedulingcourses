@@ -237,6 +237,19 @@ async function openEventPage() {
   return tab && tab.id;
 }
 
+// 出現驗證碼時把監控分頁與視窗切到最前面，讓使用者可以立刻輸入
+async function bringTabToFront(tabId) {
+  try {
+    const tab = await chrome.tabs.update(tabId, { active: true });
+    if (tab && tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true, drawAttention: true });
+    await log('info', 'attention', '已將活動頁面切換到最前面', '請直接輸入驗證碼');
+  } catch (e) {
+    /* 分頁可能剛被關閉 */
+  }
+}
+
+let alertRepeatCount = 0;
+
 // ── 內容腳本回報處理（狀態轉換 → 通知） ────────────────────
 async function handleReport(report, tabId) {
   const monitor = await S.getMonitor();
@@ -289,7 +302,10 @@ async function handleReport(report, tabId) {
   switch (report.pageType) {
     case PT.CAPTCHA:
     case PT.VERIFICATION:
-      if (typeChanged) await notifyIf(report.pageType, { dedupeKey: report.url });
+      if (typeChanged) {
+        if (active) await bringTabToFront(tabId);
+        await notifyIf(report.pageType, { dedupeKey: report.url });
+      }
       update.attention = report.pageType;
       badge = 'attention';
       break;
@@ -398,6 +414,17 @@ const handlers = {
     if (m.tabId !== (sender.tab && sender.tab.id)) return { ok: false };
     await log(msg.level || 'info', msg.category || 'assist', msg.message || '', msg.detail || '');
     return { ok: true };
+  },
+
+  // 驗證碼尚未輸入時重複提示音（由內容腳本在您開始操作後停止送出）
+  async alertRepeat(msg, sender) {
+    const m = await S.getMonitor();
+    const profile = await S.getActiveProfile();
+    if (!sender.tab || m.tabId !== sender.tab.id || m.state !== MS.MONITORING) return { played: false };
+    if (!['captcha', 'verification'].includes(m.attention)) return { played: false };
+    if (!profile || profile.notify.sound === false) return { played: false };
+    alertRepeatCount++;
+    return { played: await N.playSound('alert') };
   },
 
   async getPersonalForFill(msg, sender) {
@@ -520,4 +547,4 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 chrome.runtime.onStartup.addListener(() => recoverAfterRestart('瀏覽器重新啟動'));
 
 // 讓測試與除錯可以呼叫（不對外公開，只在 service worker 內有效）
-self.__tp = { handlers, handleReport, recoverAfterRestart, startMonitoring, stopMonitoring, scheduleReminders, scheduleRefresh, handleRefreshAlarm };
+self.__tp = { alertRepeats: () => alertRepeatCount, handlers, handleReport, recoverAfterRestart, startMonitoring, stopMonitoring, scheduleReminders, scheduleRefresh, handleRefreshAlarm };
