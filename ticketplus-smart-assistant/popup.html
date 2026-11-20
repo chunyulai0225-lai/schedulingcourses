@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <title>Ticket Plus 購票小幫手</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="top">
+    <img src="icons/icon48.png" alt="" width="28" height="28">
+    <div class="brand">
+      <strong>Ticket Plus 購票小幫手</strong>
+      <span class="sub">半自動購票輔助｜最後由您親自確認</span>
+    </div>
+  </header>
+
+  <!-- 尚未建立設定時 -->
+  <section id="empty" class="card empty" hidden>
+    <p class="big">👋 歡迎使用！</p>
+    <p>請先建立一組活動設定（活動網址、票種、區域、張數），再回來按「開始監控」。</p>
+    <button class="btn primary block" data-act="options">＋ 建立第一組購票設定</button>
+  </section>
+
+  <main id="main" hidden>
+    <section class="card">
+      <label class="lbl" for="profileSelect">目前使用的活動設定</label>
+      <select id="profileSelect" title="切換活動設定"></select>
+
+      <dl class="info">
+        <dt>活動名稱</dt><dd id="pName">—</dd>
+        <dt>活動網址</dt><dd id="pUrl" class="url">—</dd>
+        <dt>開賣時間</dt><dd id="pSale">—</dd>
+        <dt>預計場次</dt><dd id="pSession">—</dd>
+        <dt>預設票種</dt><dd id="pTypes">—</dd>
+        <dt>預設區域</dt><dd id="pAreas">—</dd>
+        <dt>購買張數</dt><dd id="pQty">—</dd>
+        <dt>運作模式</dt><dd id="pMode">—</dd>
+      </dl>
+    </section>
+
+    <section class="card status">
+      <div class="status-head">
+        <span>監控狀態</span>
+        <span id="mState" class="chip mute">未啟動</span>
+      </div>
+      <div id="attention" class="alert" hidden></div>
+      <dl class="info">
+        <dt>目前頁面</dt><dd id="mPage">—</dd>
+        <dt>目前票況</dt><dd id="mSale">—</dd>
+        <dt>最後偵測</dt><dd id="mTime">—</dd>
+      </dl>
+      <p id="mSummary" class="summary"></p>
+      <ul id="mMatches" class="matches"></ul>
+    </section>
+
+    <section class="actions">
+      <button class="btn primary" id="btnStart" data-act="start">▶ 開始監控</button>
+      <button class="btn" id="btnPause" data-act="pause">⏸ 暫停監控</button>
+      <button class="btn danger" id="btnStop" data-act="stop">⏹ 停止監控</button>
+      <button class="btn" data-act="openEvent">🔗 開啟活動頁面</button>
+      <button class="btn" data-act="options">⚙ 編輯購票設定</button>
+      <button class="btn" data-act="logs">📋 監控紀錄</button>
+    </section>
+    <p id="msg" class="msg" role="status" aria-live="polite"></p>
+  </main>
+
+  <footer class="foot">外掛不會破解驗證碼、不會繞過排隊、不會替您付款。</footer>
+
+  <script src="config.js"></script>
+  <script src="storage.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
