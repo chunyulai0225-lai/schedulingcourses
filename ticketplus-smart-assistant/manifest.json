@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "Ticket Plus Smart Ticket Assistant",
+  "short_name": "TP 購票小幫手",
+  "description": "Ticket Plus（遠大售票）半自動購票輔助：設定購票偏好、監控票況、即時通知，最後由您親自確認訂單與付款。",
+  "version": "1.0.0",
+  "minimum_chrome_version": "120",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Ticket Plus 購票小幫手",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage",
+    "notifications",
+    "alarms",
+    "tabs",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "https://ticketplus.com.tw/*",
+    "https://*.ticketplus.com.tw/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://ticketplus.com.tw/*",
+        "https://*.ticketplus.com.tw/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": [
+        "config.js",
+        "ticketplus-adapter.js",
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}
