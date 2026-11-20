@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="tpsa-mock-site" content="ticketplus">
+<title>2026 星光巡迴演唱會 台北站 | Ticket Plus遠大售票系統（模擬）</title>
+<link rel="stylesheet" href="mock.css"></head>
+<body><header>Ticket Plus 遠大售票（測試用模擬網站，非官方）</header>
+<main>
+<h1 class="event-title">2026 星光巡迴演唱會 台北站</h1>
+<p>演出地點：台北小巨蛋｜每人限購 4 張</p>
+<p>開賣時間：2026/12/01 12:00</p>
+<div class="session-list">
+  <div class="session-item">
+    <div class="session-info"><div class="date">2026/12/20(六) 19:30</div><div class="venue">台北小巨蛋</div></div>
+    <div class="session-action"><button class="v-btn disabled" disabled>尚未開賣</button></div>
+  </div>
+  <div class="session-item">
+    <div class="session-info"><div class="date">2026/12/21(日) 19:00</div><div class="venue">台北小巨蛋</div></div>
+    <div class="session-action"><button class="v-btn disabled" disabled>尚未開賣</button></div>
+  </div>
+</div>
+</main>
+<script src="mock.js"></script>
+<script>
+var ms=parseInt(new URLSearchParams(location.search).get('flip')||'0',10);
+if(ms>0) setTimeout(function(){ var b=document.querySelectorAll('.session-action')[0]; b.innerHTML='<a class="v-btn" href="order.html">立即購買</a>'; }, ms);
+</script>
+</body></html>
