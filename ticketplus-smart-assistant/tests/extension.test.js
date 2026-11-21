@@ -361,6 +361,59 @@ async function run() {
   await useProfile({ refresh: { enabled: false, acknowledged: false, intervalSec: 60 } });
 
   // ════════════════════════════════════════════════════
+  section('Enter 快速操作（外掛只選取按鈕，由使用者按 Enter）');
+  const focusedText = (pg) => pg.evaluate(() => { const a = document.activeElement; return a && a !== document.body ? (a.className + '|' + (a.innerText || '').trim()) : ''; });
+  await test('開賣時自動選取「立即購買」並把分頁切到最前面', async () => {
+    await useProfile({ mode: 'monitor', quickKey: true });
+    const other = await ctx.newPage();
+    await other.goto(`${base}/no-meta.html`);
+    await page.goto(`${base}/event-live.html?flip=3000`);
+    await startOn(page);
+    await other.bringToFront();
+    await waitFor(async () => (await focusedText(page)).includes('立即購買'), { timeout: 10000, msg: '購買按鈕應被選取' });
+    const tid = await tabIdOf(page);
+    await waitFor(() => S(async (id) => (await chrome.tabs.get(id)).active, tid), { msg: '分頁應切到最前面' });
+    assert((await panelText(page)).includes('按 Enter 即可進入購買'));
+    eq((await untrusted(page)).clicks, null, '外掛不得自行點擊');
+    await page.screenshot({ path: path.join(SHOTS, 'enter-buy.png') });
+    await other.close();
+  });
+  await test('使用者按 Enter → 由使用者本人進入購票頁', async () => {
+    await page.keyboard.press('Enter');
+    await page.waitForURL(/order\.html/);
+  });
+  await test('購票頁自動選取最優先票種的「＋」；連按 Enter 3 次只會選到設定的 2 張', async () => {
+    await waitFor(async () => (await focusedText(page)).includes('btn-plus'), { msg: '＋按鈕應被選取' });
+    const rowName = await page.evaluate(() => document.activeElement.closest('.ticket-row').querySelector('.area-name').textContent);
+    eq(rowName, 'VIP A區 全票', '應選取第一優先的票種');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter'); // 多按一次
+    await page.waitForTimeout(800);
+    eq(await page.locator('.ticket-row:has-text("VIP A區") .count').innerText(), '2');
+    assert(!(await focusedText(page)).includes('btn-plus'), '選滿後應放開焦點');
+    await waitFor(async () => (await panelText(page)).includes('已選好 2 張'));
+    eq((await untrusted(page)).clicks, null, '外掛不得自行點擊');
+  });
+  await test('不搶游標：使用者點了其他欄位後不會被拉回；按面板「⌨ 選取按鈕」可重新選取', async () => {
+    await page.reload();
+    await waitFor(async () => (await focusedText(page)).includes('btn-plus'));
+    await page.click('#f-name');
+    await page.waitForTimeout(2500);
+    eq(await page.evaluate(() => document.activeElement.id), 'f-name');
+    await page.locator('tpsa-panel [data-act=refocus]').click();
+    await waitFor(async () => (await focusedText(page)).includes('btn-plus'));
+  });
+  await test('關閉 Enter 快速操作時不選取任何按鈕', async () => {
+    await useProfile({ mode: 'monitor', quickKey: false });
+    await page.reload();
+    await waitFor(async () => (await monitor()).pageType === 'order');
+    await page.waitForTimeout(1500);
+    eq(await focusedText(page), '');
+    await useProfile({ quickKey: true });
+  });
+
+  // ════════════════════════════════════════════════════
   section('第七階段：選票輔助與一般資料填寫');
   await test('純監控模式：不顯示填寫按鈕、不修改任何欄位', async () => {
     await useProfile({ mode: 'monitor' });
@@ -504,8 +557,9 @@ async function run() {
     ['人工確認階段', '不會點擊確認或付款按鈕', '張數：2 張', '總計：NT$7,600'].forEach((t) => assert(txt.includes(t), `面板應包含「${t}」\n${txt}`));
     await page.screenshot({ path: path.join(SHOTS, 'manual-confirm.png') });
   });
-  await test('等待 5 秒：確認付款按鈕從未被外掛點擊', async () => {
+  await test('等待 5 秒：確認付款按鈕從未被外掛點擊或選取', async () => {
     await page.waitForTimeout(5000);
+    assert(await page.evaluate(() => document.activeElement.id !== 'pay-btn'), '付款按鈕不得被選取');
     eq(await untrusted(page), { clicks: null, final: null });
     assert(page.url().includes('checkout.html'));
   });

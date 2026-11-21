@@ -103,6 +103,7 @@ function fillForm(p, isNew) {
   [0, 1, 2].forEach((i) => (f['area' + i].value = p.areas[i] || ''));
   f.quantity.value = String(p.quantity);
   f.allowOtherAreas.checked = p.allowOtherAreas;
+  f.quickKey.checked = p.quickKey !== false;
   f.querySelector(`input[name=mode][value=${p.mode}]`).checked = true;
   f.notifyDesktop.checked = p.notify.desktop;
   f.notifySound.checked = p.notify.sound;
@@ -132,6 +133,7 @@ function readForm() {
     areas: [f.area0.value, f.area1.value, f.area2.value].map((s) => s.trim()),
     quantity: f.quantity.value,
     allowOtherAreas: f.allowOtherAreas.checked,
+    quickKey: f.quickKey.checked,
     mode: f.querySelector('input[name=mode]:checked').value,
     notify: {
       desktop: f.notifyDesktop.checked,

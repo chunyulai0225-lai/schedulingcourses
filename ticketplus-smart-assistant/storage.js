@@ -72,6 +72,7 @@
       areas: ['', '', ''],
       quantity: 1,
       allowOtherAreas: false,
+      quickKey: true, // 偵測到符合的票券時選取按鈕，由使用者按 Enter
       mode: 'monitor', // 'monitor' 純監控（預設） | 'assist' 輔助模式（每個動作都需您按下確認）
       notify: {
         desktop: true,
@@ -111,6 +112,7 @@
       areas,
       quantity: clampInt(p.quantity, 1, C.MAX_TICKETS, 1),
       allowOtherAreas: bool(p.allowOtherAreas, false),
+      quickKey: bool(p.quickKey, true),
       mode: p.mode === 'assist' ? 'assist' : 'monitor',
       notify: {
         desktop: bool(n.desktop, true),

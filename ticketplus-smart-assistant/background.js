@@ -238,11 +238,11 @@ async function openEventPage() {
 }
 
 // 出現驗證碼時把監控分頁與視窗切到最前面，讓使用者可以立刻輸入
-async function bringTabToFront(tabId) {
+async function bringTabToFront(tabId, why) {
   try {
     const tab = await chrome.tabs.update(tabId, { active: true });
     if (tab && tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true, drawAttention: true });
-    await log('info', 'attention', '已將活動頁面切換到最前面', '請直接輸入驗證碼');
+    await log('info', 'attention', '已將活動頁面切換到最前面', why || '請直接輸入驗證碼');
   } catch (e) {
     /* 分頁可能剛被關閉 */
   }
@@ -349,6 +349,7 @@ async function handleReport(report, tabId) {
       const hasMatch = !!matchKey;
       if (hasMatch && matchKey !== monitor.lastMatchKey) {
         const best = report.matches[0];
+        if (active && profile && profile.quickKey !== false) await bringTabToFront(tabId, '偵測到符合的票券，按 Enter 即可操作');
         await notifyIf('ticketMatch', {
           dedupeKey: matchKey,
           message: `已偵測到符合設定的票券：${best.label}${best.reason ? '（' + best.reason + '）' : ''}，請立即查看瀏覽器並親自選購。`

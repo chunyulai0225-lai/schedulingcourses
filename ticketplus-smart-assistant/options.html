@@ -96,6 +96,9 @@
             <span><b>純監控模式（建議）</b>：只讀取頁面、標示符合的票券並通知您，不會修改網頁上的任何欄位。</span></label>
           <label class="radio"><input type="radio" name="mode" value="assist">
             <span><b>輔助模式</b>：額外提供「填寫購票資料」與「設定下拉選單張數」按鈕。每個動作都必須由您按下並確認後才會執行；外掛仍不會點擊網站上的任何按鈕。</span></label>
+          <label class="check"><input type="checkbox" name="quickKey" checked> ⌨ Enter 快速操作：偵測到符合的票券時，自動選取「購買」或「＋」按鈕，您只要按 Enter
+            <small>外掛只會「選取」按鈕並把頁面切到最前面，按下 Enter 的是您本人；選滿設定張數後會自動放開，多按也不會多選。付款、結帳類按鈕永遠不會被選取。兩種模式都可使用。</small>
+          </label>
           <p class="warn-box">⚠️ 請先詳閱 Ticket Plus 的服務條款。若條款不允許使用輔助工具，請只使用「純監控模式」並以人工操作購票。</p>
         </fieldset>
 

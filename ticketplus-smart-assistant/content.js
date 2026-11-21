@@ -46,6 +46,7 @@
     focusMessage: '',
     alertTimer: null,
     alertCount: 0,
+    enter: { key: null, el: null, kind: null, message: '', done: false },
     collapsed: false,
     highlighted: new Set(),
     confirmAction: null,
@@ -112,10 +113,12 @@
     // 安全檢查（驗證碼／排隊／登入）：立即暫停所有輔助操作
     const hold = HOLD_TYPES.includes(pageType);
     if (hold) {
+      clearEnterTarget();
       state.confirmAction = null;
       removeHighlights();
     } else {
       applyHighlights(ev);
+      updateEnterTarget(ev);
     }
     if (hold && pageType !== state.holdType) startHold(pageType);
     if (hold && CODE_TYPES.includes(pageType) && !state.focusDone) focusVerificationInput();
@@ -127,6 +130,172 @@
     state.hadHold = hold;
 
     report(analysis, ev);
+    renderPanel();
+  }
+
+  // ── Enter 快速操作：把鍵盤焦點放在您要按的按鈕上，由您自己按 Enter ──
+  //  ✔ 只「選取（focus）」按鈕，按下 Enter 的是您本人，網站收到的是真人操作
+  //  ✘ 外掛不會自己觸發點擊；付款／結帳／送出類按鈕永遠不會被選取
+  const FORBIDDEN_TARGET_RE = /(付款|結帳|確認訂單|送出|完成訂購|pay|checkout|submit)/i;
+  const BUY_TEXT_RE = /(立即購買|立即訂購|立即購票|前往購票|購買|購票|選購|buy)/i;
+
+  function quickKeyEnabled() {
+    return !state.profile || state.profile.quickKey !== false;
+  }
+
+  function editableFocused(except) {
+    const ae = document.activeElement;
+    return !!(ae && ae !== except && ae !== document.body && (/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) || ae.isContentEditable));
+  }
+
+  function markTarget(el) {
+    if (el.dataset.tpsaEnterPrev === undefined) el.dataset.tpsaEnterPrev = el.style.outline || '';
+    el.style.outline = '4px solid #f29900';
+    el.style.outlineOffset = '2px';
+    el.addEventListener('blur', () => unmarkTarget(el), { once: true });
+  }
+
+  function unmarkTarget(el) {
+    if (!el || el.dataset.tpsaEnterPrev === undefined) return;
+    el.style.outline = el.dataset.tpsaEnterPrev;
+    el.style.outlineOffset = '';
+    delete el.dataset.tpsaEnterPrev;
+  }
+
+  function clearEnterTarget() {
+    if (state.enter.el) unmarkTarget(state.enter.el);
+    if (state.enter.el && state.enter.onPress) state.enter.el.removeEventListener('click', state.enter.onPress);
+    state.enter = { key: null, el: null, kind: null, message: '', done: false };
+  }
+
+  function findEnterTarget(match) {
+    const a = state.analysis;
+    if (match.kind === 'session') {
+      const s = a.sessions.find((x) => x.index === match.index);
+      if (!s || !s.row.isConnected) return null;
+      const el = Array.from(s.row.querySelectorAll('a, button, [role="button"]')).find((b) => {
+        const t = (b.innerText || b.textContent || '').trim();
+        return A.isVisible(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true' && BUY_TEXT_RE.test(t) && !FORBIDDEN_TARGET_RE.test(t);
+      });
+      return el ? { el, kind: 'buy' } : null;
+    }
+    const t = a.tickets.find((x) => x.index === match.index);
+    if (!t || !t.control || t.control.disabled) return null;
+    if (t.control.kind === 'buttons') return { el: t.control.plus, kind: 'plus', ticket: t };
+    return { el: t.control.el, kind: 'field', ticket: t };
+  }
+
+  function currentCount(ticket) {
+    const c = ticket && ticket.control;
+    if (!c) return null;
+    if (c.kind === 'buttons') {
+      if (!c.valueEl) return null;
+      const v = c.valueEl.tagName === 'INPUT' ? c.valueEl.value : c.valueEl.textContent;
+      const n = parseInt(v, 10);
+      return Number.isNaN(n) ? null : n;
+    }
+    const n = parseInt(c.el.value, 10);
+    return Number.isNaN(n) ? 0 : n;
+  }
+
+  function enterMessage(kind, qty, count) {
+    if (kind === 'buy') return '⌨ 已選取「購買」按鈕，按 Enter 即可進入購買。';
+    if (kind === 'plus') return `⌨ 已選取「＋」按鈕：按 Enter ${qty} 次即可選 ${qty} 張（目前 ${count == null ? '?' : count} 張）。選滿後會自動放開，多按也不會多選。`;
+    return `⌨ 已選取張數欄位：直接按數字鍵 ${qty} 選擇張數。`;
+  }
+
+  function focusEnterTarget(target, force) {
+    const el = target.el;
+    if (!el || !el.isConnected || FORBIDDEN_TARGET_RE.test(el.innerText || el.textContent || '')) return false;
+    if (!force && editableFocused(el)) {
+      state.enter.message = '您正在輸入其他欄位，外掛沒有搶走游標。需要時請按面板上的「⌨ 選取按鈕」。';
+      return false;
+    }
+    el.scrollIntoView({ block: 'center' });
+    el.focus({ preventScroll: true });
+    markTarget(el);
+    if (state.enter.el && state.enter.onPress) state.enter.el.removeEventListener('click', state.enter.onPress);
+    state.enter.el = el;
+    state.enter.kind = target.kind;
+    state.enter.done = false;
+    if (target.kind === 'plus') {
+      // 每按一次（Enter 或滑鼠）就計數；第 N 次時「立刻」放開焦點，連按也不會多選
+      const start = currentCount(target.ticket);
+      const qty = state.profile.quantity;
+      let presses = 0;
+      state.enter.onPress = (e) => {
+        if (!e.isTrusted || start == null) return;
+        presses++;
+        if (start + presses >= qty && document.activeElement === el) {
+          el.blur();
+          state.enter.done = true;
+          state.enter.message = `✔ 已選好 ${qty} 張，請確認後自行點擊下一步。`;
+          scheduleEvaluate();
+        }
+      };
+      el.addEventListener('click', state.enter.onPress);
+    }
+    state.enter.message = enterMessage(target.kind, state.profile.quantity, target.ticket ? currentCount(target.ticket) : null);
+    return true;
+  }
+
+  function updateEnterTarget(ev) {
+    const a = state.analysis;
+    if (!isActive() || !quickKeyEnabled() || !a || ![PT.EVENT, PT.ORDER].includes(a.pageType) || !ev.matches.length) {
+      if (state.enter.key) clearEnterTarget();
+      return;
+    }
+    const best = ev.matches[0];
+    const key = `${location.href}|${best.kind}|${best.label}`;
+    if (state.enter.key === key) {
+      if (state.enter.kind === 'plus') trackQuantity(best);
+      return; // 同一個目標只自動選取一次；您移開焦點後不會一直搶回來
+    }
+    clearEnterTarget();
+    state.enter.key = key;
+    const target = findEnterTarget(best);
+    if (!target) {
+      state.enter.message = '找不到可選取的按鈕，請直接用滑鼠操作。';
+      return;
+    }
+    const qty = state.profile.quantity;
+    if (target.kind === 'plus' && (currentCount(target.ticket) || 0) >= qty) {
+      state.enter.kind = 'plus';
+      state.enter.done = true;
+      state.enter.message = `✔ 已選好 ${qty} 張，請確認後自行點擊下一步。`;
+      return;
+    }
+    if (focusEnterTarget(target, false)) {
+      contentLog('info', 'Enter 快速操作：已選取按鈕', `${best.label}（${target.kind === 'buy' ? '購買按鈕' : target.kind === 'plus' ? '＋按鈕' : '張數欄位'}）`);
+    }
+  }
+
+  // ＋按鈕：達到設定張數時自動放開焦點，避免多按 Enter 造成多選
+  function trackQuantity(best) {
+    const t = state.analysis.tickets.find((x) => x.index === best.index);
+    const count = currentCount(t);
+    const qty = state.profile.quantity;
+    if (state.enter.done) {
+      if (count != null) state.enter.message = `✔ 已選好 ${count} 張${count === qty ? '' : `（設定為 ${qty} 張）`}，請確認後自行點擊下一步。`;
+      return;
+    }
+    if (count != null && count >= qty) {
+      if (state.enter.el && document.activeElement === state.enter.el) state.enter.el.blur();
+      if (state.enter.el) unmarkTarget(state.enter.el);
+      state.enter.done = true;
+      state.enter.message = `✔ 已選好 ${qty} 張，請確認後自行點擊下一步。`;
+      contentLog('success', `Enter 快速操作：已選好 ${qty} 張`, best.label);
+    } else if (state.enter.el) {
+      state.enter.message = enterMessage('plus', qty, count);
+    }
+  }
+
+  function refocusEnterTarget() {
+    const ev = state.evaluation;
+    if (!canAssist().ok || !ev || !ev.matches.length) return setFlash('目前沒有可選取的按鈕。');
+    const target = findEnterTarget(ev.matches[0]);
+    if (!target) return setFlash('找不到可選取的按鈕，請直接用滑鼠操作。');
+    focusEnterTarget(target, true);
     renderPanel();
   }
 
@@ -574,7 +743,10 @@
               m.kind === 'ticket' && isAssistMode() ? `<button class="btn" data-act="qty" data-i="${i}" ${assistAllowed ? '' : 'disabled'}>設定張數（${esc(p.quantity)} 張）</button>` : ''
             }</div></div>`;
         });
-        html += `<p class="muted">${a.pageType === PT.EVENT ? '請親自點擊網站上的購買按鈕進入選票。' : '請親自在網站上選擇並按下一步。'}外掛不會替您點擊網站按鈕。</p>`;
+        if (quickKeyEnabled() && state.enter.message) {
+          html += `<div class="alert a-ok"><b>${esc(state.enter.message)}</b>${state.enter.done ? '' : `<div class="btns"><button class="btn" data-act="refocus">⌨ 選取按鈕</button></div>`}</div>`;
+        }
+        html += `<p class="muted">${a.pageType === PT.EVENT ? '請親自點擊或按 Enter 進入選票。' : '請親自在網站上選擇並按下一步。'}外掛不會替您點擊網站按鈕。</p>`;
       } else {
         html += `<div class="alert a-info">目前沒有符合您設定且可購買的${a.pageType === PT.EVENT ? '場次' : '票券'}。</div>`;
       }
@@ -621,6 +793,7 @@
         else if (act === 'locate' && m) return locate(m);
         else if (act === 'qty' && m) return prepareQuantity(m);
         else if (act === 'fill') return prepareFill();
+        else if (act === 'refocus') return refocusEnterTarget();
         else if (act === 'confirm-yes' && state.confirmAction) {
           const run = state.confirmAction.run;
           state.confirmAction = null;
@@ -684,7 +857,10 @@
       state.confirmAction = null;
       state.flash = '';
     }
-    if (!isActive()) stopAlertRepeat();
+    if (!isActive()) {
+      stopAlertRepeat();
+      clearEnterTarget();
+    }
     evaluate();
   }
 
